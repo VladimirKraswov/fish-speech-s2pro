@@ -1,0 +1,40 @@
+:root{
+  --bg:#f4efe7;--surface:#fffaf4;--muted:#6a5d52;--text:#1f1b17;--border:#dfd1c3;
+  --primary:#bf5f33;--accent:#0f5c60;--danger:#a53a2a;--success:#2d7b49;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;font-family:"IBM Plex Sans",sans-serif;color:var(--text);
+  background:linear-gradient(180deg,#f9f5ef,#ede2d5);
+}
+button,input,select,textarea{font:inherit}
+button{cursor:pointer}
+input,select,textarea{
+  width:100%;padding:12px 13px;border-radius:12px;border:1px solid var(--border);
+  background:#fff;color:var(--text)
+}
+textarea{min-height:110px;resize:vertical}
+h1,h2,h3{margin:0;font-family:"Space Grotesk",sans-serif}
+.lead,.muted,small{color:var(--muted)}
+.hidden{display:none!important}
+.eyebrow{
+  display:inline-flex;padding:6px 12px;border-radius:999px;background:#e7f1f1;
+  color:var(--accent);font-size:12px;font-weight:700;text-transform:uppercase
+}
+.button{
+  border:0;border-radius:12px;padding:11px 15px;font-weight:700;transition:.15s
+}
+.button.primary{background:var(--primary);color:#fff}
+.button.secondary{background:#e7f1f1;color:var(--accent)}
+.button.danger{background:#f5e2df;color:var(--danger)}
+.button.ghost{background:#efe6dc;color:var(--text)}
+.button:hover{transform:translateY(-1px)}
+.panel,.card,.logbox{
+  background:var(--surface);border:1px solid var(--border);border-radius:20px;
+  box-shadow:0 18px 50px rgba(62,39,11,.08)
+}
+.badge{
+  display:inline-flex;padding:5px 10px;border-radius:999px;background:#e7f1f1;
+  color:var(--accent);font-size:12px;font-weight:700
+}
+.badge.bad{background:#f5e2df;color:var(--danger)}

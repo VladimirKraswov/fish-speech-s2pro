@@ -1,0 +1,38 @@
+name: fish-speech-s2pro
+
+x-shared-env: &shared_env
+  CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-0}
+  PYTORCH_CUDA_ALLOC_CONF: ${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+  MODEL_REPO: ${MODEL_REPO:-fishaudio/s2-pro}
+  HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+
+services:
+  tts-live:
+    build:
+      context: ..
+      dockerfile: services/tts-live/Dockerfile
+      target: ${BUILD_TARGET:-prod}
+    container_name: fish-speech-live
+    restart: unless-stopped
+    ports: ["${LIVE_PORT:-7779}:8888"]
+    volumes:
+      - ../data:/app/data
+      - ../references:/app/references
+    environment:
+      <<: *shared_env
+      LIVE_ENGINE: "${LIVE_ENGINE:-s2cpp}"
+      LIVE_MODEL_PATH: ${LIVE_MODEL_PATH:-/app/data/live_engine/s2-pro-q8_0.gguf}
+      S2CPP_BIN: ${S2CPP_BIN:-/app/data/live_engine/s2}
+      S2CPP_TOKENIZER_PATH: ${S2CPP_TOKENIZER_PATH:-/app/data/live_engine/tokenizer.json}
+      S2CPP_EXTRA_ARGS: "${S2CPP_EXTRA_ARGS:-}"
+    gpus: all
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8888/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+networks:
+  default:
+    name: fish-speech-s2pro

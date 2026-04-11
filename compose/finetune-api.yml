@@ -1,0 +1,32 @@
+name: fish-speech-s2pro
+
+x-shared-env: &shared_env
+  CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-0}
+  PYTORCH_CUDA_ALLOC_CONF: ${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+  MODEL_REPO: ${MODEL_REPO:-fishaudio/s2-pro}
+  HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+
+services:
+  finetune-api:
+    build:
+      context: ..
+      dockerfile: services/finetune/Dockerfile
+    container_name: fish-speech-finetune-api
+    restart: unless-stopped
+    ports: ["${FINETUNE_PORT:-7781}:8888"]
+    volumes:
+      - ../data:/app/data
+      - ../references:/app/references
+    environment:
+      <<: *shared_env
+    gpus: all
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8888/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  default:
+    name: fish-speech-s2pro

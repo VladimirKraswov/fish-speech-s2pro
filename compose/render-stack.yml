@@ -1,0 +1,116 @@
+name: fish-speech-s2pro
+
+x-shared-env: &shared_env
+  CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-0}
+  PYTORCH_CUDA_ALLOC_CONF: ${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+  MODEL_REPO: ${MODEL_REPO:-fishaudio/s2-pro}
+  HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+
+services:
+  tts-render:
+    build:
+      context: ..
+      dockerfile: services/tts-render/Dockerfile
+      target: ${BUILD_TARGET:-prod}
+    container_name: fish-speech-render
+    restart: unless-stopped
+    ports: ["${RENDER_PORT:-7778}:8888"]
+    volumes:
+      - ../data:/app/data
+      - ../references:/app/references
+    environment:
+      <<: *shared_env
+      MODEL_PATH: ${MODEL_PATH:-/app/data/checkpoints/s2-pro}
+      ENABLE_COMPILE: "${RENDER_STACK_ENABLE_COMPILE:-true}"
+      DTYPE: "${DTYPE:-bfloat16}"
+      DEVICE: "${DEVICE:-cuda}"
+      CHUNK_LENGTH: "${RENDER_STACK_CHUNK_LENGTH:-240}"
+      NORMALIZE_TEXT: "${NORMALIZE_TEXT:-true}"
+      USE_MEMORY_CACHE: "${USE_MEMORY_CACHE:-on}"
+      TEMPERATURE: "${TEMPERATURE:-0.62}"
+      TOP_P: "${TOP_P:-0.88}"
+      REPETITION_PENALTY: "${REPETITION_PENALTY:-1.15}"
+    gpus: all
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8888/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 420s
+
+  text-preprocess:
+    build:
+      context: ..
+      dockerfile: services/text-preprocess/Dockerfile
+    container_name: fish-speech-preprocess
+    restart: unless-stopped
+    ports: ["${PREPROCESS_PORT:-7780}:8888"]
+    volumes:
+      - ../data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8888/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  finetune-api:
+    build:
+      context: ..
+      dockerfile: services/finetune/Dockerfile
+    container_name: fish-speech-finetune-api
+    restart: unless-stopped
+    ports: ["${FINETUNE_PORT:-7781}:8888"]
+    volumes:
+      - ../data:/app/data
+      - ../references:/app/references
+    environment:
+      <<: *shared_env
+    gpus: all
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8888/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: services/api-gateway/Dockerfile
+    container_name: fish-speech-gateway
+    restart: unless-stopped
+    ports: ["${GATEWAY_PORT:-7777}:8888"]
+    volumes:
+      - ../data:/app/data
+      - ../references:/app/references
+    environment:
+      <<: *shared_env
+      LIVE_ENGINE: "disabled"
+    depends_on:
+      tts-render: { condition: service_healthy }
+      text-preprocess: { condition: service_healthy }
+      finetune-api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8888/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ../frontend
+    container_name: fish-speech-frontend
+    restart: unless-stopped
+    ports: ["${FRONTEND_PORT:-7070}:80"]
+    depends_on:
+      api-gateway: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/nginx-healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  default:
+    name: fish-speech-s2pro

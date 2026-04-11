@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fish Speech Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/finetune-assets/css/base.css">
+  <link rel="stylesheet" href="/finetune-assets/css/layout.css">
+  <link rel="stylesheet" href="/finetune-assets/css/components.css">
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div>
+        <span class="eyebrow">Fish Speech Studio</span>
+      </div>
+      <div class="hero-meta">
+        <div><span>Активная модель</span><strong id="hero-model">—</strong></div>
+        <div><span>Активный референс</span><strong id="hero-reference">—</strong></div>
+        <div><span>Статус fine-tune</span><strong id="hero-finetune">idle</strong></div>
+      </div>
+    </header>
+
+    <nav class="tabs" id="tabs">
+      <button data-tab="synthesis" class="active">Synthesis</button>
+      <button data-tab="models">Models</button>
+      <button data-tab="references">References</button>
+      <button data-tab="datasets">Datasets</button>
+      <button data-tab="finetune">Fine-tune</button>
+      <button data-tab="logs">Logs</button>
+    </nav>
+
+    <section id="tab-synthesis" class="tab active"></section>
+    <section id="tab-models" class="tab"></section>
+    <section id="tab-references" class="tab"></section>
+    <section id="tab-datasets" class="tab"></section>
+    <section id="tab-finetune" class="tab"></section>
+    <section id="tab-logs" class="tab"></section>
+  </main>
+  <script type="module" src="/finetune-assets/js/app.js"></script>
+</body>
+</html>

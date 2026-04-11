@@ -1,0 +1,18 @@
+name: fish-speech-s2pro
+
+services:
+  frontend:
+    build:
+      context: ../frontend
+    container_name: fish-speech-frontend
+    restart: unless-stopped
+    ports: ["${FRONTEND_PORT:-7070}:80"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/nginx-healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  default:
+    name: fish-speech-s2pro

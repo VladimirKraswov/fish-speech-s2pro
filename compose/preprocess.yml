@@ -1,0 +1,21 @@
+name: fish-speech-s2pro
+
+services:
+  text-preprocess:
+    build:
+      context: ..
+      dockerfile: services/text-preprocess/Dockerfile
+    container_name: fish-speech-preprocess
+    restart: unless-stopped
+    ports: ["${PREPROCESS_PORT:-7780}:8888"]
+    volumes:
+      - ../data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8888/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  default:
+    name: fish-speech-s2pro
