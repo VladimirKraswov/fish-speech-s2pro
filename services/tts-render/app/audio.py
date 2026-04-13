@@ -1,7 +1,9 @@
 import io
 import wave
 
+import numpy as np
 import soundfile as sf
+
 
 def wav_seconds(data: bytes) -> float:
     try:
@@ -36,3 +38,27 @@ def audio_array_to_wav(audio, sample_rate: int) -> bytes:
     buffer = io.BytesIO()
     sf.write(buffer, audio, sample_rate, format="WAV", subtype="PCM_16")
     return buffer.getvalue()
+
+
+def concatenate_audio_segments(segments: list, sample_rate: int, silence_ms: int = 0):
+    if not segments:
+        raise ValueError("Audio segment list must not be empty")
+
+    arrays = [np.asarray(segment) for segment in segments]
+    if len(arrays) == 1:
+        return arrays[0]
+
+    silence_samples = max(int(sample_rate * max(silence_ms, 0) / 1000), 0)
+    if silence_samples <= 0:
+        return np.concatenate(arrays, axis=0)
+
+    first = arrays[0]
+    silence_shape = (silence_samples,) if first.ndim == 1 else (silence_samples, first.shape[1])
+    silence = np.zeros(silence_shape, dtype=first.dtype)
+
+    stitched: list[np.ndarray] = []
+    for index, array in enumerate(arrays):
+        if index:
+            stitched.append(silence)
+        stitched.append(array)
+    return np.concatenate(stitched, axis=0)

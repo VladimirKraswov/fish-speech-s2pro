@@ -21,7 +21,12 @@ settings.ensure_dirs()
 events = EventService()
 jobs = JobService(events, settings.logs_root / "jobs.jsonl", load_existing=True)
 datasets = DatasetService(settings.training_root)
-references = ReferenceService(settings.references_root)
+references = ReferenceService(
+    settings.references_root,
+    max_seconds=settings.reference_max_seconds,
+    sample_rate=settings.reference_sample_rate,
+    channels=settings.reference_channels,
+)
 models = ModelService(settings, events)
 
 
@@ -151,7 +156,7 @@ async def get_reference(name: str):
 
 @api.post("/references")
 async def save_reference(name: str = Form(...), transcript: str = Form(...), replace: bool = Form(False), audio_file: UploadFile = File(...)):
-    data = references.save(name, audio_file, transcript, replace)
+    data = await asyncio.to_thread(references.save, name, audio_file, transcript, replace)
     await events.publish("reference.saved", {"reference": data})
     return data
 
@@ -317,6 +322,13 @@ async def _proxy_audio(payload: dict, streaming: bool):
 async def _fetch_audio(payload: dict, live: bool) -> bytes:
     if live and not settings.live_enabled:
         raise HTTPException(status_code=409, detail="Live runtime is disabled.")
+    if not live and payload.get("reference_id"):
+        try:
+            await asyncio.to_thread(references.ensure_runtime_ready, str(payload.get("reference_id")))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     url = f"{settings.live_url if live else settings.render_url}/internal/synthesize"
     async with httpx.AsyncClient(timeout=3600) as client:
         response = await client.post(url, json=payload)

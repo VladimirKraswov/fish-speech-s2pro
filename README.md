@@ -67,14 +67,20 @@ Render-only стек стартует из [compose/render-stack.yml](/fish-spee
 
 ## Что важно про первый старт
 
-`tts-render` в render-only стеке запускается с `torch.compile`.
+По умолчанию `tts-render` в render-only стеке запускается с `torch.compile`, но в более VRAM-осторожной конфигурации.
 
 Это означает:
-- холодный старт дольше
-- первый `healthy` может появиться не сразу
-- после прогрева synthesis обычно работает заметно быстрее
+- compile остаётся включён
+- `cudagraphs` по умолчанию выключены, чтобы уменьшить пик памяти
+- при `CUDA out of memory` длинный текст автоматически переразбивается на более безопасные части и склеивается обратно
 
 Именно поэтому [scripts/deploy-render-stack.sh](/fish-speech-s2pro/scripts/deploy-render-stack.sh) ждёт реальной готовности `render`, `gateway` и `frontend`, а не просто старта контейнеров.
+
+Если у карты есть запас VRAM и нужен ещё более агрессивный профиль, можно включить `cudagraphs` явно:
+
+```bash
+COMPILE_CUDAGRAPHS=true make render-stack-deploy
+```
 
 ## Команды запуска
 
@@ -168,6 +174,14 @@ curl -o /tmp/render.wav -X POST http://127.0.0.1:7777/api/synthesis \
   -d '{"target":"render","text":"Привет, это проверка качественной озвучки через s2-pro."}'
 ```
 
+Если используете reference, длинные reference-аудио теперь автоматически:
+
+- конвертируются в `sample.wav`
+- приводятся к mono / `24000 Hz`
+- обрезаются до `REFERENCE_MAX_SECONDS`
+
+Это сделано специально, чтобы длинный reference не выбивал render в `CUDA out of memory`.
+
 Если нужен только benchmark без UI:
 
 ```bash
@@ -182,19 +196,26 @@ Render-only стек использует quality-first профиль:
 
 - `DTYPE=bfloat16`
 - `RENDER_STACK_ENABLE_COMPILE=true`
+- `COMPILE_CUDAGRAPHS=false`
 - `RENDER_STACK_CHUNK_LENGTH=240`
+- `OOM_RETRY_CHUNK_CHARS=140`
+- `CHUNK_JOIN_SILENCE_MS=90`
+- `REFERENCE_MAX_SECONDS=12`
+- `REFERENCE_SAMPLE_RATE=24000`
+- `REFERENCE_CHANNELS=1`
 - `NORMALIZE_TEXT=true`
 - `USE_MEMORY_CACHE=on`
 
 Практический смысл:
 - качество остаётся высоким
-- throughput после прогрева лучше
-- старт контейнера дольше, чем в fast-restart режиме
+- compile остаётся включён
+- профиль осторожнее по VRAM, чем compile+cudagraphs
+- длинные запросы переживают OOM заметно лучше благодаря автоматическому chunked retry
 
-Если нужен более быстрый cold start ценой части производительности после прогрева, можно в `.env` поменять:
+Если нужен ещё более быстрый synthesis и карта выдерживает больший VRAM-пик, можно в `.env` поменять:
 
 ```env
-RENDER_STACK_ENABLE_COMPILE=false
+COMPILE_CUDAGRAPHS=true
 ```
 
 Если хотите осторожно уменьшить латентность на коротких фразах, можно попробовать:
@@ -218,8 +239,14 @@ MODEL_PATH=/app/data/checkpoints/s2-pro
 DTYPE=bfloat16
 ENABLE_COMPILE=false
 RENDER_STACK_ENABLE_COMPILE=true
+COMPILE_CUDAGRAPHS=false
 CHUNK_LENGTH=240
 RENDER_STACK_CHUNK_LENGTH=240
+OOM_RETRY_CHUNK_CHARS=140
+CHUNK_JOIN_SILENCE_MS=90
+REFERENCE_MAX_SECONDS=12
+REFERENCE_SAMPLE_RATE=24000
+REFERENCE_CHANNELS=1
 NORMALIZE_TEXT=true
 USE_MEMORY_CACHE=on
 TEMPERATURE=0.62
@@ -230,7 +257,9 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 Замысел тут такой:
 - глобальный `ENABLE_COMPILE` оставлен безопасным
-- для render-only bundle включается отдельный `RENDER_STACK_ENABLE_COMPILE=true`
+- render-only bundle держит `torch.compile` включённым
+- более тяжёлая часть compile-конфигурации вынесена в opt-in через `COMPILE_CUDAGRAPHS=true`
+- длинные тексты страхуются через автоматический chunked retry
 
 ## Обновление на сервере
 

@@ -19,6 +19,9 @@ class Settings:
     training_root: Path
     references_root: Path
     logs_root: Path
+    reference_max_seconds: int
+    reference_sample_rate: int
+    reference_channels: int
 
     def ensure_dirs(self) -> None:
         ensure_dirs(self.checkpoints_root, self.finetuned_root, self.training_root, self.references_root, self.logs_root)
@@ -43,4 +46,7 @@ def load_settings() -> Settings:
         training_root=paths["training_root"],
         references_root=paths["references_root"],
         logs_root=paths["logs_root"],
+        reference_max_seconds=int(os.getenv("REFERENCE_MAX_SECONDS", "12")),
+        reference_sample_rate=int(os.getenv("REFERENCE_SAMPLE_RATE", "24000")),
+        reference_channels=int(os.getenv("REFERENCE_CHANNELS", "1")),
     )

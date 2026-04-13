@@ -110,18 +110,29 @@ Compose-команды:
 Render-only bundle использует отдельный профиль:
 
 - `RENDER_STACK_ENABLE_COMPILE=true`
+- `COMPILE_CUDAGRAPHS=false`
 - `RENDER_STACK_CHUNK_LENGTH=240`
+- `OOM_RETRY_CHUNK_CHARS=140`
+- `CHUNK_JOIN_SILENCE_MS=90`
+- `REFERENCE_MAX_SECONDS=12`
+- `REFERENCE_SAMPLE_RATE=24000`
+- `REFERENCE_CHANNELS=1`
 - `DTYPE=bfloat16`
 - `NORMALIZE_TEXT=true`
 - `USE_MEMORY_CACHE=on`
 
 Смысл такой:
 
-- холодный старт дольше
-- после прогрева synthesis обычно заметно быстрее
-- это лучше подходит для quality-first режима на одной мощной GPU
+- `torch.compile` остаётся включённым
+- VRAM-профиль осторожнее за счёт отключённых `cudagraphs`
+- длинные запросы защищены через автоматический chunked retry после OOM
+- длинные reference-аудио автоматически нормализуются и обрезаются до безопасной длины
 
-Глобальный `ENABLE_COMPILE=false` остаётся безопасным дефолтом для остальных режимов, чтобы не раздувать старт и VRAM там, где это не нужно.
+Если нужен ещё более агрессивный speed-профиль и карта выдерживает больший VRAM-пик, запускайте так:
+
+```bash
+COMPILE_CUDAGRAPHS=true make render-stack-deploy
+```
 
 ## Порядок старта
 

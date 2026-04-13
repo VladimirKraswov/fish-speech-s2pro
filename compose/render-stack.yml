@@ -22,9 +22,12 @@ services:
       <<: *shared_env
       MODEL_PATH: ${MODEL_PATH:-/app/data/checkpoints/s2-pro}
       ENABLE_COMPILE: "${RENDER_STACK_ENABLE_COMPILE:-true}"
+      COMPILE_CUDAGRAPHS: "${COMPILE_CUDAGRAPHS:-false}"
       DTYPE: "${DTYPE:-bfloat16}"
       DEVICE: "${DEVICE:-cuda}"
       CHUNK_LENGTH: "${RENDER_STACK_CHUNK_LENGTH:-240}"
+      OOM_RETRY_CHUNK_CHARS: "${OOM_RETRY_CHUNK_CHARS:-140}"
+      CHUNK_JOIN_SILENCE_MS: "${CHUNK_JOIN_SILENCE_MS:-90}"
       NORMALIZE_TEXT: "${NORMALIZE_TEXT:-true}"
       USE_MEMORY_CACHE: "${USE_MEMORY_CACHE:-on}"
       TEMPERATURE: "${TEMPERATURE:-0.62}"
@@ -86,6 +89,9 @@ services:
     environment:
       <<: *shared_env
       LIVE_ENGINE: "disabled"
+      REFERENCE_MAX_SECONDS: "${REFERENCE_MAX_SECONDS:-12}"
+      REFERENCE_SAMPLE_RATE: "${REFERENCE_SAMPLE_RATE:-24000}"
+      REFERENCE_CHANNELS: "${REFERENCE_CHANNELS:-1}"
     depends_on:
       tts-render: { condition: service_healthy }
       text-preprocess: { condition: service_healthy }

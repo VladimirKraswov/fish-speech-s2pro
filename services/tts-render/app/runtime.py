@@ -1,7 +1,9 @@
 import asyncio
+import gc
 from dataclasses import replace
 import logging
 from pathlib import Path
+import re
 import time
 from typing import Any
 
@@ -12,7 +14,7 @@ from fish_speech.models.dac.inference import load_model as load_decoder_model
 from fish_speech.models.text2semantic.inference import launch_thread_safe_queue
 from fish_speech.utils.schema import ServeTTSRequest
 
-from .audio import audio_array_to_wav, wav_seconds
+from .audio import audio_array_to_wav, concatenate_audio_segments, wav_seconds
 from .settings import load_settings
 
 logger = logging.getLogger(__name__)
@@ -80,6 +82,7 @@ class FishRuntime:
 
         self._ready = False
         self._teardown_engine()
+        self._configure_compile_runtime(compile_enabled)
 
         decoder_checkpoint = target / "codec.pth"
         llama_queue = launch_thread_safe_queue(
@@ -157,7 +160,36 @@ class FishRuntime:
             raise ValueError(f"Text is too long for render runtime: {len(text)} > {self.settings.max_text_length}")
 
         start_time = time.perf_counter()
-        req = ServeTTSRequest(
+        req = self._build_request(payload, text)
+        try:
+            sample_rate, audio = self._infer_audio(req)
+        except RuntimeError as exc:
+            if not self._should_retry_chunked(exc, req.text):
+                raise
+            logger.warning(
+                "Render hit CUDA OOM in compile mode, retrying with chunked synthesis | chars=%s | chunk_chars=%s",
+                len(req.text),
+                self.settings.oom_retry_chunk_chars,
+            )
+            self._recover_after_oom()
+            sample_rate, audio = self._synthesize_chunked(payload, req.text)
+
+        audio_bytes = audio_array_to_wav(audio, sample_rate)
+        elapsed = time.perf_counter() - start_time
+        duration = wav_seconds(audio_bytes)
+        rtf = elapsed / duration if duration > 0 else 0.0
+
+        logger.info(
+            "Render synthesized %s chars -> %.2fs audio in %.2fs -> RTF=%.3f",
+            len(req.text),
+            duration,
+            elapsed,
+            rtf,
+        )
+        return audio_bytes
+
+    def _build_request(self, payload: dict, text: str) -> ServeTTSRequest:
+        return ServeTTSRequest(
             text=text,
             reference_id=payload.get("reference_id"),
             references=payload.get("references") or [],
@@ -174,6 +206,7 @@ class FishRuntime:
             use_memory_cache=str(self._payload_value(payload, "use_memory_cache", self.settings.use_memory_cache)),
         )
 
+    def _infer_audio(self, req: ServeTTSRequest):
         sample_rate = 44_100
         audio = None
         for result in self.engine.inference(req):
@@ -184,20 +217,26 @@ class FishRuntime:
 
         if audio is None:
             raise RuntimeError("No audio generated")
+        return sample_rate, audio
 
-        audio_bytes = audio_array_to_wav(audio, sample_rate)
-        elapsed = time.perf_counter() - start_time
-        duration = wav_seconds(audio_bytes)
-        rtf = elapsed / duration if duration > 0 else 0.0
+    def _synthesize_chunked(self, payload: dict, text: str):
+        segments = self._split_text(text, self.settings.oom_retry_chunk_chars)
+        if len(segments) <= 1:
+            raise RuntimeError("CUDA out of memory and chunked retry could not split the text safely")
 
-        logger.info(
-            "Render synthesized %s chars -> %.2fs audio in %.2fs -> RTF=%.3f",
-            len(req.text),
-            duration,
-            elapsed,
-            rtf,
+        sample_rate = 44_100
+        audio_segments = []
+        for segment in segments:
+            req = self._build_request(payload, segment)
+            sample_rate, audio = self._infer_audio(req)
+            audio_segments.append(audio)
+
+        stitched = concatenate_audio_segments(
+            audio_segments,
+            sample_rate=sample_rate,
+            silence_ms=self.settings.chunk_join_silence_ms,
         )
-        return audio_bytes
+        return sample_rate, stitched
 
     def _teardown_engine(self) -> None:
         if self._llama_queue is not None:
@@ -213,6 +252,24 @@ class FishRuntime:
 
         if self._device.startswith("cuda") and torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    def _recover_after_oom(self) -> None:
+        gc.collect()
+        if self._device.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def _configure_compile_runtime(self, compile_enabled: bool) -> None:
+        if not compile_enabled:
+            return
+        try:
+            import torch._inductor.config as inductor_config
+
+            triton_cfg = getattr(inductor_config, "triton", None)
+            if triton_cfg is not None and hasattr(triton_cfg, "cudagraphs"):
+                triton_cfg.cudagraphs = self.settings.compile_cudagraphs
+                logger.info("Torch compile settings | cudagraphs=%s", self.settings.compile_cudagraphs)
+        except Exception:
+            logger.debug("Unable to configure torch.compile runtime options", exc_info=True)
 
     def _resolve_device(self, requested: str) -> str:
         requested = (requested or "cuda").strip().lower()
@@ -257,3 +314,55 @@ class FishRuntime:
     def _payload_value(payload: dict, key: str, default):
         value = payload.get(key)
         return default if value is None else value
+
+    def _should_retry_chunked(self, exc: RuntimeError, text: str) -> bool:
+        return self._compile_enabled and len(text) > self.settings.oom_retry_chunk_chars and self._is_cuda_oom(exc)
+
+    @staticmethod
+    def _is_cuda_oom(exc: BaseException) -> bool:
+        message = str(exc).lower()
+        return "cuda out of memory" in message or "outofmemoryerror" in message
+
+    def _split_text(self, text: str, max_chars: int) -> list[str]:
+        compact = re.sub(r"\s+", " ", text).strip()
+        if len(compact) <= max_chars:
+            return [compact]
+
+        parts = [piece.strip() for piece in re.split(r"(?<=[.!?…])\s+", compact) if piece.strip()]
+        if len(parts) == 1:
+            parts = [piece.strip() for piece in re.split(r"(?<=[,;:])\s+", compact) if piece.strip()]
+
+        chunks: list[str] = []
+        current = ""
+
+        def flush() -> None:
+            nonlocal current
+            if current:
+                chunks.append(current.strip())
+                current = ""
+
+        for part in parts:
+            if len(part) > max_chars:
+                flush()
+                words = part.split()
+                line = ""
+                for word in words:
+                    candidate = f"{line} {word}".strip()
+                    if line and len(candidate) > max_chars:
+                        chunks.append(line.strip())
+                        line = word
+                    else:
+                        line = candidate
+                if line:
+                    chunks.append(line.strip())
+                continue
+
+            candidate = f"{current} {part}".strip()
+            if current and len(candidate) > max_chars:
+                flush()
+                current = part
+            else:
+                current = candidate
+
+        flush()
+        return chunks or [compact]
