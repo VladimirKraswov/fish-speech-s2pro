@@ -35,3 +35,4 @@ uvicorn
 einops
 matplotlib
 rich
+soxr
