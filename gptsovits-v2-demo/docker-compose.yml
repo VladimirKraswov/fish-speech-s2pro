@@ -34,7 +34,7 @@ services:
     gpus: all
     shm_size: ${GPTSOVITS_SHM_SIZE:-16g}
     healthcheck:
-      test: ["CMD-SHELL", "code=$$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${GPTSOVITS_API_PORT:-9880}/tts || true); test \"$$code\" = \"400\" -o \"$$code\" = \"422\""]
+      test: ["CMD-SHELL", "code=$$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:${GPTSOVITS_API_PORT:-9880}/tts || true); test \"$$code\" = \"400\" -o \"$$code\" = \"422\""]
       interval: 30s
       timeout: 10s
       retries: 20

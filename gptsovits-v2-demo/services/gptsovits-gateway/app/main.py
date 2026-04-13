@@ -48,7 +48,9 @@ def normalize_language(value: str | None, label: str) -> str:
 
 async def probe_runtime(client: httpx.AsyncClient) -> dict:
     try:
-        response = await client.get(f"{settings.runtime_url}/tts", timeout=10.0)
+        # Probe the runtime with an empty POST so FastAPI validation returns 422
+        # before the upstream handler touches missing query params and raises 500.
+        response = await client.post(f"{settings.runtime_url}/tts", json={}, timeout=10.0)
     except httpx.RequestError as exc:
         return {"status": "starting", "ready": False, "detail": str(exc)}
 
