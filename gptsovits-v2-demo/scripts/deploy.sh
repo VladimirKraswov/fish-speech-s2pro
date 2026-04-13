@@ -31,6 +31,12 @@ wait_for() {
       echo "[gptsovits-demo] $label is ready"
       return 0
     fi
+    if (( i == 1 || i % 12 == 0 )); then
+      echo "[gptsovits-demo] waiting for $label ($i/$attempts)"
+      docker compose -f docker-compose.yml ps || true
+      echo "[gptsovits-demo] recent runtime logs"
+      docker compose -f docker-compose.yml logs --tail=25 gptsovits-runtime || true
+    fi
     sleep 5
   done
 

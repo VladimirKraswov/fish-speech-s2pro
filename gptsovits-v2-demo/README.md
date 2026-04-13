@@ -49,6 +49,7 @@ make deploy
 Важно:
 
 - первая загрузка обычно самая долгая
+- первый прогрев runtime может занимать 10-20 минут, поэтому `gptsovits-gateway` и `gptsovits-frontend` какое-то время могут висеть в `Waiting`
 - веса и кэши сохраняются в `data`
 - референсы сохраняются в `references`
 - все compose-тома и служебные файлы остаются внутри этой папки
@@ -72,6 +73,16 @@ docker compose -f docker-compose.yml logs -f gptsovits-runtime
 ```
 
 Важно: `gptsovits-runtime` — это имя сервиса в compose. `gptsovits-v2-runtime` — имя контейнера.
+
+Если `make deploy` долго висит на `Waiting`, это обычно означает не падение, а ожидание `healthy`-статуса runtime. Самые полезные команды диагностики:
+
+```bash
+docker compose -f docker-compose.yml ps
+docker compose -f docker-compose.yml logs -f gptsovits-runtime
+docker inspect --format='{{json .State.Health}}' gptsovits-v2-runtime
+```
+
+Пока в логах появляются строки `gptsovits-bootstrap` или идёт загрузка весов, процесс живой. Настоящая проблема обычно проявляется как traceback или полностью остановившиеся логи на 10+ минут.
 
 Самая удобная команда:
 
@@ -104,6 +115,7 @@ make deploy
 - `GPTSOVITS_GATEWAY_PORT=7088`
 - `GPTSOVITS_API_PORT=9880`
 - `GPTSOVITS_SHM_SIZE=16g`
+- `GPTSOVITS_RUNTIME_HEALTH_START_PERIOD=1200s`
 - `GPTSOVITS_DEVICE=cuda`
 - `GPTSOVITS_HALF=true`
 - `GPTSOVITS_MODEL_REPO=lj1995/GPT-SoVITS`
