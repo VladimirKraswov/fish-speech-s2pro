@@ -1,1 +1,0 @@
-"""Silero TTS runtime app."""
