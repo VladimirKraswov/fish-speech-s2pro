@@ -31,7 +31,8 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 10 \
 
 RUN python -m pip install --index-url https://download.pytorch.org/whl/cu128 \
     torch==2.10.0 \
-    torchaudio==2.10.0
+    torchaudio==2.10.0 \
+    torchcodec==0.10.0
 
 COPY services/gptsovits-runtime/requirements.inference.txt /tmp/requirements.inference.txt
 RUN python -m pip install -r /tmp/requirements.inference.txt \
