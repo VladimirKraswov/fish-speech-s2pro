@@ -31,12 +31,12 @@ av>=11
 onnxruntime
 requests
 soundfile
-huggingface_hub>=0.13
+huggingface_hub==0.23.5
 uvicorn
 einops
 matplotlib
 rich
 soxr
 pandas
-gradio>=4.0,<=4.24.0
+gradio==4.24.0
 ctranslate2>=4.0,<5
