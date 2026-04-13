@@ -82,6 +82,8 @@
 
 `api-gateway` теперь предназначен не только для web UI, но и для внешних интеграций.
 
+Полная reference-документация лежит в [docs/API.md](/Volumes/Extend/work/fish-speech-s2pro/docs/API.md).
+
 Что доступно наружу:
 
 - `GET /docs`

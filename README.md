@@ -196,6 +196,8 @@ curl -s -X POST http://127.0.0.1:7777/api/synthesis/benchmark \
 
 Gateway теперь можно использовать как полноценный внешний API, а не только как backend для web UI.
 
+Полная reference-документация лежит в [docs/API.md](/Volumes/Extend/work/fish-speech-s2pro/docs/API.md).
+
 Основные точки входа:
 
 - `GET /docs` и `GET /openapi.json`
