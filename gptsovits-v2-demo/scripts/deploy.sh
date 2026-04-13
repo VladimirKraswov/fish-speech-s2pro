@@ -4,6 +4,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+print_runtime_debug() {
+  echo "[gptsovits-demo] current status"
+  docker compose -f docker-compose.yml ps -a || true
+  echo "[gptsovits-demo] runtime logs"
+  docker compose -f docker-compose.yml logs --tail=300 gptsovits-runtime || true
+}
+
+trap 'echo "[gptsovits-demo] deploy failed"; print_runtime_debug' ERR
+
 mkdir -p data/hf-cache data/torch-cache references
 
 echo "[gptsovits-demo] validating compose configuration"
@@ -43,3 +52,5 @@ echo
 
 echo "[gptsovits-demo] frontend: http://127.0.0.1:${GPTSOVITS_FRONTEND_PORT:-7070}"
 echo "[gptsovits-demo] gateway:  http://127.0.0.1:${GPTSOVITS_GATEWAY_PORT:-7088}"
+
+trap - ERR

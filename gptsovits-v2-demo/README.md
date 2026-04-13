@@ -65,6 +65,14 @@ make ps
 make deploy
 ```
 
+Логи runtime смотрятся так:
+
+```bash
+docker compose -f docker-compose.yml logs -f gptsovits-runtime
+```
+
+Важно: `gptsovits-runtime` — это имя сервиса в compose. `gptsovits-v2-runtime` — имя контейнера.
+
 Самая удобная команда:
 
 ```bash

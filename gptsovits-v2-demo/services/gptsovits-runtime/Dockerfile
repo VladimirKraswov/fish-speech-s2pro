@@ -35,6 +35,7 @@ RUN python -m pip install --index-url https://download.pytorch.org/whl/cu128 \
 
 COPY services/gptsovits-runtime/requirements.inference.txt /tmp/requirements.inference.txt
 RUN python -m pip install -r /tmp/requirements.inference.txt \
+    && python -m pip install matplotlib rich nltk \
     && (python -m nltk.downloader averaged_perceptron_tagger averaged_perceptron_tagger_eng cmudict punkt \
     || python -m nltk.downloader averaged_perceptron_tagger cmudict punkt)
 
