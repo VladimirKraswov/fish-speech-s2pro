@@ -18,15 +18,13 @@
 
 ## Что поднимается
 
-Render-only стек стартует из [compose/render-stack.yml](/Volumes/Extend/work/fish-speech-s2pro/compose/render-stack.yml) и включает:
+Render-only стек стартует из [compose/render-stack.yml](/fish-speech-s2pro/compose/render-stack.yml) и включает:
 
 - `tts-render` на порту `7778`
 - `text-preprocess` на порту `7780`
 - `finetune-api` на порту `7781`
 - `api-gateway` на порту `7777`
 - `frontend` на порту `7070`
-
-Внутри этого стека `live` явно отключён, поэтому он не съедает VRAM и не влияет на latency качественного synthesis.
 
 ## Требования
 
@@ -76,7 +74,7 @@ Render-only стек стартует из [compose/render-stack.yml](/Volumes/E
 - первый `healthy` может появиться не сразу
 - после прогрева synthesis обычно работает заметно быстрее
 
-Именно поэтому [scripts/deploy-render-stack.sh](/Volumes/Extend/work/fish-speech-s2pro/scripts/deploy-render-stack.sh) ждёт реальной готовности `render`, `gateway` и `frontend`, а не просто старта контейнеров.
+Именно поэтому [scripts/deploy-render-stack.sh](/fish-speech-s2pro/scripts/deploy-render-stack.sh) ждёт реальной готовности `render`, `gateway` и `frontend`, а не просто старта контейнеров.
 
 ## Команды запуска
 
@@ -264,14 +262,14 @@ make gateway-up
 make frontend-up
 ```
 
-Файлы compose для этого лежат в каталоге [compose](/Volumes/Extend/work/fish-speech-s2pro/compose):
+Файлы compose для этого лежат в каталоге [compose](/fish-speech-s2pro/compose):
 
-- [compose/render.yml](/Volumes/Extend/work/fish-speech-s2pro/compose/render.yml)
-- [compose/preprocess.yml](/Volumes/Extend/work/fish-speech-s2pro/compose/preprocess.yml)
-- [compose/finetune-api.yml](/Volumes/Extend/work/fish-speech-s2pro/compose/finetune-api.yml)
-- [compose/gateway.yml](/Volumes/Extend/work/fish-speech-s2pro/compose/gateway.yml)
-- [compose/frontend.yml](/Volumes/Extend/work/fish-speech-s2pro/compose/frontend.yml)
-- [compose/live.yml](/Volumes/Extend/work/fish-speech-s2pro/compose/live.yml)
+- [compose/render.yml](/fish-speech-s2pro/compose/render.yml)
+- [compose/preprocess.yml](/fish-speech-s2pro/compose/preprocess.yml)
+- [compose/finetune-api.yml](/fish-speech-s2pro/compose/finetune-api.yml)
+- [compose/gateway.yml](/fish-speech-s2pro/compose/gateway.yml)
+- [compose/frontend.yml](/fish-speech-s2pro/compose/frontend.yml)
+- [compose/live.yml](/fish-speech-s2pro/compose/live.yml)
 
 И отдельно проверять:
 
@@ -289,23 +287,3 @@ Render-only стек не отключает fine-tuning control plane. Посл
 
 - UI: `http://127.0.0.1:7070/finetune/`
 - API status: `http://127.0.0.1:7781/internal/finetune/status`
-
-## Live
-
-`live` сейчас не нужен для качественного render-запуска и не входит в рекомендуемый стек.
-
-Если позже понадобится вернуть его отдельно:
-
-```bash
-make live-up
-make live-health
-```
-
-Но для одного GPU это почти всегда отдельное решение по VRAM и latency, поэтому лучше подключать его уже осознанно и отдельно от render-only режима.
-
-Если нужен полный стек с UI и `live`, поднимайте его отдельно:
-
-```bash
-make up
-make health
-```

@@ -21,19 +21,19 @@
 - `entrypoint.sh`
 - `Dockerfile`
 
-Общий инфраструктурный код лежит в [shared](/Volumes/Extend/work/fish-speech-s2pro/shared). Legacy `backend/` runtime больше не участвует в сборке.
+Общий инфраструктурный код лежит в [shared](/fish-speech-s2pro/shared).
 
 ## Compose-файлы
 
-Каждый сервис можно поднимать отдельно через свой compose-файл из [compose](/Volumes/Extend/work/fish-speech-s2pro/compose):
+Каждый сервис можно поднимать отдельно через свой compose-файл из [compose](fish-speech-s2pro/compose):
 
-- [compose/render.yml](/Volumes/Extend/work/fish-speech-s2pro/compose/render.yml)
-- [compose/live.yml](/Volumes/Extend/work/fish-speech-s2pro/compose/live.yml)
-- [compose/preprocess.yml](/Volumes/Extend/work/fish-speech-s2pro/compose/preprocess.yml)
-- [compose/finetune-api.yml](/Volumes/Extend/work/fish-speech-s2pro/compose/finetune-api.yml)
-- [compose/gateway.yml](/Volumes/Extend/work/fish-speech-s2pro/compose/gateway.yml)
-- [compose/frontend.yml](/Volumes/Extend/work/fish-speech-s2pro/compose/frontend.yml)
-- [compose/render-stack.yml](/Volumes/Extend/work/fish-speech-s2pro/compose/render-stack.yml)
+- [compose/render.yml](/fish-speech-s2pro/compose/render.yml)
+- [compose/live.yml](/fish-speech-s2pro/compose/live.yml)
+- [compose/preprocess.yml](/fish-speech-s2pro/compose/preprocess.yml)
+- [compose/finetune-api.yml](/fish-speech-s2pro/compose/finetune-api.yml)
+- [compose/gateway.yml](/fish-speech-s2pro/compose/gateway.yml)
+- [compose/frontend.yml](/fish-speech-s2pro/compose/frontend.yml)
+- [compose/render-stack.yml](/fish-speech-s2pro/compose/render-stack.yml)
 
 ## Порты
 
