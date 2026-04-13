@@ -117,10 +117,12 @@ make deploy
 - `GPTSOVITS_SHM_SIZE=16g`
 - `GPTSOVITS_RUNTIME_HEALTH_START_PERIOD=1200s`
 - `GPTSOVITS_DEVICE=cuda`
-- `GPTSOVITS_HALF=true`
+- `GPTSOVITS_HALF=false`
 - `GPTSOVITS_MODEL_REPO=lj1995/GPT-SoVITS`
 - `GPTSOVITS_UPSTREAM_REPO=https://github.com/TZFC/GPT-SoVITS-V2.git`
 - `GPTSOVITS_UPSTREAM_REF=main`
+
+Для `RTX 5090` и других современных GPU в этом demo по умолчанию отключён `half`-режим. Это немного тяжелее по памяти, но заметно снижает вероятность runtime-ошибок инференса в `api_v2.py` на новых CUDA / PyTorch стеках. Если захотите максимум скорости и убедитесь, что всё стабильно, можно вернуть `GPTSOVITS_HALF=true`.
 
 ## Источники
 

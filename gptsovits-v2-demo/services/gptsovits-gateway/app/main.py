@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+import logging
 
 import httpx
 from fastapi import APIRouter, FastAPI, File, Form, HTTPException, UploadFile
@@ -16,6 +17,7 @@ ALLOWED_LANGUAGES = {
     "en": {"value": "en", "label": "English"},
     "zh": {"value": "zh", "label": "Chinese"},
 }
+logger = logging.getLogger("gptsovits-gateway")
 
 settings: Settings = load_settings()
 references = ReferenceStore(
@@ -139,6 +141,11 @@ async def list_references():
     return {"references": references.list()}
 
 
+@api.get("/events")
+async def noop_events():
+    return Response(status_code=204)
+
+
 @api.get("/references/{name}")
 async def get_reference(name: str):
     return references.get(name)
@@ -210,7 +217,9 @@ async def synthesize(payload: SynthesisRequest):
         raise RuntimeError(f"GPT-SoVITS runtime is unavailable: {exc}") from exc
 
     if response.status_code != 200:
-        raise HTTPException(status_code=502, detail=extract_runtime_error(response))
+        detail = extract_runtime_error(response)
+        logger.warning("runtime returned non-200 for synthesis: status=%s detail=%s", response.status_code, detail)
+        raise HTTPException(status_code=502, detail=detail)
 
     return Response(
         content=response.content,
