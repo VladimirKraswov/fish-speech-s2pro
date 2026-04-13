@@ -62,6 +62,8 @@ Render-only стек стартует из [compose/render-stack.yml](/fish-spee
 
 - frontend: `http://127.0.0.1:7070`
 - gateway: `http://127.0.0.1:7777`
+- swagger docs: `http://127.0.0.1:7070/docs`
+- openapi schema: `http://127.0.0.1:7070/openapi.json`
 
 Если заходите с другой машины в локальной сети, замените `127.0.0.1` на IP сервера.
 
@@ -189,6 +191,80 @@ curl -s -X POST http://127.0.0.1:7777/api/synthesis/benchmark \
   -H 'Content-Type: application/json' \
   -d '{"target":"render","text":"Загружайте датасеты, обучайте голосовые профили и запускайте качественный синтез речи."}'
 ```
+
+## Публичный API
+
+Gateway теперь можно использовать как полноценный внешний API, а не только как backend для web UI.
+
+Основные точки входа:
+
+- `GET /docs` и `GET /openapi.json`
+- `GET /api/events/history`
+- `GET /api/datasets`
+- `GET /api/synthesis/capabilities`
+- `POST /api/synthesis`
+- `GET /api/references`
+- `POST /api/references`
+- `GET /api/references/{name}/audio`
+- `GET /api/finetune`
+- `GET /api/finetune/status`
+- `POST /api/finetune/validate`
+- `POST /api/finetune/start`
+- `POST /api/finetune/stop`
+- `GET /api/jobs`
+- `POST /api/jobs/{job_id}/cancel`
+- `GET /v1/datasets`
+- `GET /v1/events/history`
+- `GET /v1/render/capabilities`
+- `GET /v1/render/models`
+- `POST /v1/render/models/activate`
+- `GET /v1/render/references`
+- `POST /v1/render/speech`
+- `POST /v1/render/benchmark`
+- `POST /v1/audio/speech`
+- `GET /v1/finetune`
+- `GET /v1/finetune/status`
+- `POST /v1/finetune/validate`
+- `POST /v1/finetune/start`
+- `POST /v1/finetune/stop`
+- `GET /v1/jobs`
+
+Примеры:
+
+```bash
+curl -s http://127.0.0.1:7777/api/synthesis/capabilities | jq
+```
+
+```bash
+curl -o /tmp/render.wav -X POST http://127.0.0.1:7777/v1/render/speech \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "text":"Привет, это внешний API для render Fish Audio.",
+    "reference_id":"my_reference",
+    "temperature":0.62,
+    "top_p":0.88,
+    "repetition_penalty":1.15
+  }'
+```
+
+```bash
+curl -o /tmp/render.wav -X POST http://127.0.0.1:7777/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "input":"Привет, это OpenAI-style совместимый маршрут поверх render runtime.",
+    "voice":"my_reference",
+    "response_format":"wav"
+  }'
+```
+
+Важно:
+
+- `voice` в `/v1/audio/speech` маппится на `reference_id`
+- `response_format` сейчас поддерживается только `wav`
+- если хотите использовать другой render checkpoint, сначала активируйте его через `POST /api/models/activate` или `POST /v1/render/models/activate`
+- `GET /api/synthesis/capabilities` и `GET /v1/render/capabilities` теперь возвращают `supported_request_fields`, где перечислены поддерживаемые render knobs
+- для render-запросов наружу доступны `reference_id`, `references`, `chunk_length`, `temperature`, `top_p`, `repetition_penalty`, `seed`, `normalize`, `use_memory_cache`
+- fine-tune сценарий тоже доступен через API: датасеты, валидация конфигурации, старт/стоп обучения, просмотр статуса и jobs
 
 ## Render profile
 

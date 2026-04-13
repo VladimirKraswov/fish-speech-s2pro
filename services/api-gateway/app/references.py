@@ -103,6 +103,13 @@ class ReferenceService:
         shutil.rmtree(path)
         return {"deleted": True, "reference": data}
 
+    def audio_path(self, name: str) -> Path:
+        path = self._dir(name)
+        audio = self._audio_file(path)
+        if not audio:
+            raise ValueError(f"Reference audio does not exist: {path.name}")
+        return audio
+
     def _dir(self, name: str, create: bool = False) -> Path:
         path = self.root / ensure_name(name, "Reference name")
         if not create and not path.exists():

@@ -78,6 +78,62 @@
 - healthchecks остаются зелёными без `tts-live`
 - VRAM уходит на качественный render, а не делится между render и live
 
+## Публичный Render API
+
+`api-gateway` теперь предназначен не только для web UI, но и для внешних интеграций.
+
+Что доступно наружу:
+
+- `GET /docs`
+- `GET /openapi.json`
+- `GET /api/events/history`
+- `GET /api/datasets`
+- `GET /api/synthesis/capabilities`
+- `POST /api/synthesis`
+- `GET /api/references`
+- `POST /api/references`
+- `GET /api/references/{name}/audio`
+- `GET /api/finetune`
+- `GET /api/finetune/status`
+- `POST /api/finetune/validate`
+- `POST /api/finetune/start`
+- `POST /api/finetune/stop`
+- `GET /api/jobs`
+- `GET /v1/datasets`
+- `GET /v1/events/history`
+- `GET /v1/render/capabilities`
+- `GET /v1/render/models`
+- `GET /v1/render/references`
+- `POST /v1/render/speech`
+- `POST /v1/render/benchmark`
+- `POST /v1/audio/speech`
+- `GET /v1/finetune`
+- `GET /v1/finetune/status`
+- `POST /v1/finetune/validate`
+- `POST /v1/finetune/start`
+- `POST /v1/finetune/stop`
+- `GET /v1/jobs`
+
+`/v1/audio/speech` сделан как OpenAI-style совместимый слой поверх render runtime:
+
+- `input` -> текст для синтеза
+- `voice` -> `reference_id`
+- `response_format` -> пока только `wav`
+
+`GET /api/synthesis/capabilities` и `GET /v1/render/capabilities` отдают не только дефолты runtime, но и `supported_request_fields`, чтобы клиент мог программно понять, какие render-параметры доступны:
+
+- `reference_id`
+- `references`
+- `chunk_length`
+- `temperature`
+- `top_p`
+- `repetition_penalty`
+- `seed`
+- `normalize`
+- `use_memory_cache`
+
+Это даёт возможность работать с качественным `Fish render` программно, не повторяя логику фронтенда, и покрывает не только synthesis, но и `datasets`, `references`, `jobs`, `events`, `finetune`.
+
 ## Отдельный запуск сервисов
 
 Compose-команды:

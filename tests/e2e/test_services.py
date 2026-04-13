@@ -240,6 +240,64 @@ class GatewayE2ETest(unittest.TestCase):
         preprocessed = json_request("POST", f"{URLS['gateway']}/api/text/preprocess", body={"text": "A  , B"})
         self.assertEqual(preprocessed["processed"], "A, B")
 
+    def test_gateway_exposes_openapi_and_v1_render_contracts(self):
+        openapi = json_request("GET", f"{URLS['gateway']}/openapi.json")
+        self.assertIn("/v1/render/speech", openapi.get("paths", {}))
+        self.assertIn("/v1/audio/speech", openapi.get("paths", {}))
+        self.assertIn("/v1/finetune", openapi.get("paths", {}))
+        self.assertIn("/v1/finetune/start", openapi.get("paths", {}))
+        self.assertIn("/v1/datasets", openapi.get("paths", {}))
+        self.assertIn("/v1/jobs", openapi.get("paths", {}))
+        self.assertIn("/v1/events/history", openapi.get("paths", {}))
+
+        capabilities = json_request("GET", f"{URLS['gateway']}/v1/render/capabilities")
+        assert_keys(
+            self,
+            capabilities,
+            {
+                "engine",
+                "ready",
+                "active_model_path",
+                "supported_output_formats",
+                "supported_request_fields",
+                "defaults",
+                "limits",
+                "supports_reference_id",
+                "supports_explicit_references",
+            },
+        )
+        self.assertEqual(capabilities["engine"], "fish")
+        self.assertIn("wav", capabilities["supported_output_formats"])
+        self.assertIn("temperature", capabilities["supported_request_fields"])
+        self.assertIn("top_p", capabilities["supported_request_fields"])
+        self.assertIn("repetition_penalty", capabilities["supported_request_fields"])
+        self.assertIn("seed", capabilities["supported_request_fields"])
+        self.assertIn("reference_id", capabilities["supported_request_fields"])
+        self.assertIn("references", capabilities["supported_request_fields"])
+        self.assertIn("use_memory_cache", capabilities["supported_request_fields"])
+
+        models = json_request("GET", f"{URLS['gateway']}/v1/render/models")
+        assert_keys(self, models, {"render", "live", "models", "render_runtime", "live_runtime"})
+
+        finetune = json_request("GET", f"{URLS['gateway']}/v1/finetune")
+        assert_keys(self, finetune, {"defaults", "presets", "datasets"})
+        self.assertIn("project_name", finetune["defaults"])
+        self.assertIn("lora_configs", finetune["presets"])
+
+        jobs = json_request("GET", f"{URLS['gateway']}/v1/jobs")
+        self.assertIn("jobs", jobs)
+
+        events = json_request("GET", f"{URLS['gateway']}/v1/events/history")
+        self.assertIn("events", events)
+
+        data = expect_http_error(
+            "POST",
+            f"{URLS['gateway']}/v1/audio/speech",
+            body={"input": "Привет", "response_format": "mp3"},
+            code=422,
+        )
+        self.assertIn("detail", data)
+
     def test_gateway_preserves_validation_errors(self):
         data = expect_http_error("POST", f"{URLS['gateway']}/api/synthesis", body={"text": ""}, code=400)
         self.assertIn("detail", data)
@@ -250,6 +308,8 @@ class GatewayE2ETest(unittest.TestCase):
         self.assertEqual(created["name"], name)
         fetched = json_request("GET", f"{URLS['gateway']}/api/datasets/{name}")
         self.assertEqual(fetched["name"], name)
+        v1_fetched = json_request("GET", f"{URLS['gateway']}/v1/datasets/{name}")
+        self.assertEqual(v1_fetched["name"], name)
         deleted = json_request("DELETE", f"{URLS['gateway']}/api/datasets/{name}")
         self.assertTrue(deleted["deleted"])
 
