@@ -375,16 +375,24 @@ async def _proxy_audio(payload: dict, streaming: bool):
 async def _fetch_audio(payload: dict, live: bool) -> bytes:
     if live and not settings.live_enabled:
         raise HTTPException(status_code=409, detail="Live runtime is disabled.")
+    prepared_payload = dict(payload)
     if not live and payload.get("reference_id"):
         try:
             await asyncio.to_thread(references.ensure_runtime_ready, str(payload.get("reference_id")))
+            if not prepared_payload.get("references"):
+                prepared_payload["references"] = [
+                    await asyncio.to_thread(references.render_payload, str(payload.get("reference_id")))
+                ]
+            # Use explicit reference payloads for render runtime to keep target text
+            # separate from saved reference transcript all the way to Fish Speech.
+            prepared_payload["reference_id"] = None
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
     url = f"{settings.live_url if live else settings.render_url}/internal/synthesize"
     async with httpx.AsyncClient(timeout=3600) as client:
-        response = await client.post(url, json=payload)
+        response = await client.post(url, json=prepared_payload)
     if response.status_code >= 400:
         try:
             detail = response.json().get("detail")

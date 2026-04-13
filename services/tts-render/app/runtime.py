@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import gc
 from dataclasses import replace
 import logging
@@ -192,7 +193,7 @@ class FishRuntime:
         return ServeTTSRequest(
             text=text,
             reference_id=payload.get("reference_id"),
-            references=payload.get("references") or [],
+            references=self._normalize_references(payload.get("references") or []),
             format="wav",
             streaming=False,
             chunk_length=int(self._payload_value(payload, "chunk_length", self.settings.chunk_length)),
@@ -309,6 +310,23 @@ class FishRuntime:
         codec_path = model_dir / "codec.pth"
         if not codec_path.exists():
             raise FileNotFoundError(f"Render model is missing codec checkpoint: {codec_path}")
+
+    @staticmethod
+    def _normalize_references(references: list[dict]) -> list[dict]:
+        normalized = []
+        for item in references:
+            if not isinstance(item, dict):
+                normalized.append(item)
+                continue
+            row = dict(item)
+            audio_b64 = row.pop("audio_b64", None)
+            if audio_b64 and "audio" not in row:
+                try:
+                    row["audio"] = base64.b64decode(audio_b64)
+                except Exception as exc:
+                    raise ValueError("Invalid reference audio payload.") from exc
+            normalized.append(row)
+        return normalized
 
     @staticmethod
     def _payload_value(payload: dict, key: str, default):
