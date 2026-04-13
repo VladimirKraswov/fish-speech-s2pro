@@ -16,6 +16,7 @@ from .settings import Settings, load_settings
 ALLOWED_LANGUAGES = {
     "en": {"value": "en", "label": "English"},
     "zh": {"value": "zh", "label": "Chinese"},
+    "ru": {"value": "ru", "label": "Russian (Experimental)"},
 }
 logger = logging.getLogger("gptsovits-gateway")
 
@@ -95,16 +96,38 @@ def extract_runtime_error(response: httpx.Response) -> str:
     return str(data)
 
 
+def builtin_demos() -> tuple[dict, ...]:
+    demos_by_name: dict[str, dict] = {
+        settings.default_reference_name: {
+            "name": settings.default_reference_name,
+            "transcript": settings.default_reference_text,
+            "language": settings.default_reference_language,
+            "voice": settings.default_reference_voice,
+            "display_name": "Built-in Demo Voice",
+        },
+        "demo-russian": {
+            "name": "demo-russian",
+            "transcript": "Здравствуйте, это встроенный русский демонстрационный голос для проверки работы GPT SoVITS на сервере.",
+            "language": "ru",
+            "voice": "ru",
+            "display_name": "Built-in Russian Demo",
+        },
+    }
+    return tuple(demos_by_name.values())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.ensure_dirs()
-    await asyncio.to_thread(
-        references.create_demo,
-        settings.default_reference_name,
-        settings.default_reference_text,
-        language=settings.default_reference_language,
-        voice=settings.default_reference_voice,
-    )
+    for demo in builtin_demos():
+        await asyncio.to_thread(
+            references.create_demo,
+            demo["name"],
+            demo["transcript"],
+            language=demo["language"],
+            voice=demo["voice"],
+            display_name=demo["display_name"],
+        )
     app.state.http = httpx.AsyncClient(follow_redirects=True)
     try:
         yield

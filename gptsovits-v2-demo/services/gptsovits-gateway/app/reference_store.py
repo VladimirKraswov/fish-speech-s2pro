@@ -9,6 +9,7 @@ from .filesystem import AUDIO_EXTENSIONS, ensure_name, save_upload
 
 
 REFERENCE_EXTENSIONS = AUDIO_EXTENSIONS | {".aac", ".m4a", ".mp4", ".ogg", ".wav"}
+SUPPORTED_REFERENCE_LANGUAGES = {"en", "zh", "ru"}
 
 
 def ensure_upload_name(filename: str) -> str:
@@ -145,8 +146,8 @@ class ReferenceStore:
         transcript_text = transcript.strip()
         if not transcript_text:
             raise ValueError("Reference transcript is required.")
-        if language not in {"en", "zh"}:
-            raise ValueError("Only English and Chinese reference transcripts are supported in this demo.")
+        if language not in SUPPORTED_REFERENCE_LANGUAGES:
+            raise ValueError("Only English, Chinese, and Russian reference transcripts are supported in this demo.")
         if path.exists() and any(path.iterdir()) and not replace:
             raise ValueError("Reference already exists. Enable replace or delete it first.")
 
@@ -172,14 +173,14 @@ class ReferenceStore:
         save_reference_meta(path, meta)
         return self.get(name)
 
-    def create_demo(self, name: str, transcript: str, *, language: str, voice: str) -> dict:
+    def create_demo(self, name: str, transcript: str, *, language: str, voice: str, display_name: str = "Built-in Demo Voice") -> dict:
         path = self._dir(name, create=True)
         output_target = path / "sample.wav"
         transcript_path = path / "sample.lab"
 
         if output_target.exists() and transcript_path.exists():
             meta = load_reference_meta(path)
-            meta.update({"kind": "builtin-demo", "language": language, "display_name": "Built-in Demo Voice"})
+            meta.update({"kind": "builtin-demo", "language": language, "display_name": display_name})
             save_reference_meta(path, meta)
             return self.get(name)
 
@@ -206,7 +207,7 @@ class ReferenceStore:
         )
         source_target.unlink(missing_ok=True)
         transcript_path.write_text(transcript, encoding="utf-8")
-        meta.update({"kind": "builtin-demo", "language": language, "display_name": "Built-in Demo Voice"})
+        meta.update({"kind": "builtin-demo", "language": language, "display_name": display_name})
         save_reference_meta(path, meta)
         return self.get(name)
 
