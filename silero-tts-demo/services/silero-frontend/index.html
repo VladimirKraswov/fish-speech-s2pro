@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Silero TTS Demo</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Russian Voice Demo</p>
+        <h1>Silero TTS на порту 7072</h1>
+        <p class="lead">
+          Самостоятельный Docker-demo для русского синтеза речи: официальный `v5_ru`, пять голосов, SSML-паузы,
+          автоударения и быстрый запуск одной командой.
+        </p>
+      </div>
+      <aside class="status-panel">
+        <div id="status-chip" class="status-chip waiting">Проверяю runtime…</div>
+        <p id="status-copy" class="status-copy">
+          На первом старте контейнер скачает официальную модель и поднимет API для синтеза.
+        </p>
+      </aside>
+    </header>
+
+    <main class="layout">
+      <section class="panel panel-controls">
+        <div class="panel-head">
+          <div>
+            <p class="mini-title">1. Параметры</p>
+            <h2>Настройка голоса</h2>
+          </div>
+          <button id="refresh-button" class="ghost" type="button">Обновить</button>
+        </div>
+
+        <div class="controls-grid">
+          <label>
+            <span>Голос</span>
+            <select id="speaker"></select>
+          </label>
+          <label>
+            <span>Sample rate</span>
+            <select id="sample-rate"></select>
+          </label>
+        </div>
+
+        <div class="toggle-grid">
+          <label class="checkbox">
+            <input id="put-accent" type="checkbox" checked>
+            <span>Автоударения</span>
+          </label>
+          <label class="checkbox">
+            <input id="put-yo" type="checkbox" checked>
+            <span>Авто `ё`</span>
+          </label>
+          <label class="checkbox">
+            <input id="use-ssml" type="checkbox">
+            <span>SSML режим</span>
+          </label>
+        </div>
+
+        <div class="notes" id="notes"></div>
+      </section>
+
+      <section class="panel panel-examples">
+        <div class="panel-head">
+          <div>
+            <p class="mini-title">2. Примеры</p>
+            <h2>Быстрые пресеты</h2>
+          </div>
+        </div>
+        <div id="example-list" class="example-list"></div>
+      </section>
+
+      <section class="panel panel-editor">
+        <div class="panel-head">
+          <div>
+            <p class="mini-title">3. Синтез</p>
+            <h2>Текст для озвучки</h2>
+          </div>
+          <div id="runtime-meta" class="runtime-meta">Runtime не готов</div>
+        </div>
+
+        <form id="synth-form" class="stack">
+          <label>
+            <span>Текст или SSML</span>
+            <textarea id="text" rows="10" placeholder="Введите русский текст или вставьте SSML с тегом &lt;speak&gt;"></textarea>
+          </label>
+          <button id="synth-button" class="primary" type="submit">Сгенерировать аудио</button>
+        </form>
+
+        <p id="feedback" class="helper">
+          Обычный текст автоматически режется по предложениям, а SSML отправляется как единый блок.
+        </p>
+      </section>
+
+      <section id="result-card" class="panel panel-result hidden">
+        <div class="panel-head">
+          <div>
+            <p class="mini-title">4. Результат</p>
+            <h2>Прослушивание</h2>
+          </div>
+          <a id="download-link" href="#" download="silero-demo.wav">Скачать WAV</a>
+        </div>
+        <audio id="audio-player" controls preload="metadata"></audio>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

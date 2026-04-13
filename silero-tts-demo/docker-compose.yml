@@ -1,0 +1,51 @@
+name: silero-tts-demo
+
+services:
+  silero-runtime:
+    build:
+      context: .
+      dockerfile: services/silero-runtime/Dockerfile
+    container_name: silero-tts-runtime
+    restart: unless-stopped
+    environment:
+      SILERO_DEVICE: ${SILERO_DEVICE:-cuda}
+      SILERO_THREADS: ${SILERO_THREADS:-4}
+      SILERO_MODEL_URL: ${SILERO_MODEL_URL:-https://models.silero.ai/models/tts/ru/v5_ru.pt}
+      SILERO_MODEL_ID: ${SILERO_MODEL_ID:-v5_ru}
+      SILERO_LANGUAGE: ${SILERO_LANGUAGE:-ru}
+      SILERO_DEFAULT_SPEAKER: ${SILERO_DEFAULT_SPEAKER:-xenia}
+      SILERO_DEFAULT_SAMPLE_RATE: ${SILERO_DEFAULT_SAMPLE_RATE:-48000}
+      SILERO_MAX_TEXT_CHARS: ${SILERO_MAX_TEXT_CHARS:-6000}
+      SILERO_CHUNK_CHARS: ${SILERO_CHUNK_CHARS:-350}
+      SILERO_SENTENCE_PAUSE_MS: ${SILERO_SENTENCE_PAUSE_MS:-160}
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "${SILERO_API_PORT:-7090}:8000"
+    gpus: all
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 300s
+
+  silero-frontend:
+    build:
+      context: ./services/silero-frontend
+    container_name: silero-tts-frontend
+    restart: unless-stopped
+    depends_on:
+      silero-runtime:
+        condition: service_healthy
+    ports:
+      - "${SILERO_FRONTEND_PORT:-7072}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/nginx-healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+networks:
+  default:
+    name: silero-tts-demo

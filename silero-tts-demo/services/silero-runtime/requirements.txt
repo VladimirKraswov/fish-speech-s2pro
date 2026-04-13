@@ -1,0 +1,5 @@
+fastapi<0.112.2
+uvicorn[standard]
+pydantic<=2.10.6
+numpy
+soundfile
