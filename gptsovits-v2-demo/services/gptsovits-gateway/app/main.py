@@ -80,7 +80,14 @@ def extract_runtime_error(response: httpx.Response) -> str:
         return (response.text or f"GPT-SoVITS runtime returned HTTP {response.status_code}").strip()
 
     if isinstance(data, dict):
-        for key in ("message", "detail", "Exception"):
+        exception = data.get("Exception")
+        detail = data.get("detail")
+        message = data.get("message")
+        if exception:
+            if message and str(message).strip() and str(message).strip().lower() != str(exception).strip().lower():
+                return f"{exception} (runtime message: {message})"
+            return str(exception)
+        for key in ("detail", "message"):
             value = data.get(key)
             if value:
                 return str(value)
@@ -206,6 +213,18 @@ async def synthesize(payload: SynthesisRequest):
         "top_p": float(payload.top_p),
         "temperature": float(payload.temperature),
     }
+    payload_preview = {
+        "text_lang": runtime_payload["text_lang"],
+        "prompt_lang": runtime_payload["prompt_lang"],
+        "ref_audio_path": runtime_payload["ref_audio_path"],
+        "text_len": len(text),
+        "prompt_text_len": len(prompt_text),
+        "text_split_method": runtime_payload["text_split_method"],
+        "speed_factor": runtime_payload["speed_factor"],
+        "top_k": runtime_payload["top_k"],
+        "top_p": runtime_payload["top_p"],
+        "temperature": runtime_payload["temperature"],
+    }
 
     try:
         response = await app.state.http.post(
@@ -218,7 +237,12 @@ async def synthesize(payload: SynthesisRequest):
 
     if response.status_code != 200:
         detail = extract_runtime_error(response)
-        logger.warning("runtime returned non-200 for synthesis: status=%s detail=%s", response.status_code, detail)
+        logger.warning(
+            "runtime returned non-200 for synthesis: status=%s detail=%s payload=%s",
+            response.status_code,
+            detail,
+            payload_preview,
+        )
         raise HTTPException(status_code=502, detail=detail)
 
     return Response(
