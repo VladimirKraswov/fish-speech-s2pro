@@ -447,7 +447,7 @@ function renderRenderTab(){
                 </label>
               </div>` : ""}
               ${supportsRequestField("x_vector_only_mode") ? `<div class="field field-check">
-                <span>${labelWithHelp("X-vector only mode", "Использует только speaker embedding из reference и меньше полагается на in-context cloning. Полезно, если голос уходит в тихий шёпот, роботизацию или бульканье.")}</span>
+                <span>${labelWithHelp("X-vector only mode", "Сильнее опирается на speaker embedding из reference и может помочь, если голос уходит в тихий шёпот, роботизацию или бульканье. Transcript reference-а для Fish Speech всё равно нужен.")}</span>
                 <label class="checkline">
                   <input id="synth-x-vector-only" type="checkbox" ${options.x_vector_only_mode ? "checked" : ""}>
                   <span>Использовать только speaker embedding</span>

@@ -55,7 +55,7 @@ class ReferenceService:
         for existing in path.iterdir():
             if existing.is_file():
                 existing.unlink()
-        source_target = path / f"upload{Path(audio_name).suffix.lower()}"
+        source_target = path / f"source{Path(audio_name).suffix.lower()}"
         output_target = path / "sample.wav"
         save_upload(audio, source_target)
         meta = normalize_reference_audio(
@@ -65,7 +65,7 @@ class ReferenceService:
             sample_rate=self.sample_rate,
             channels=self.channels,
         )
-        source_target.unlink(missing_ok=True)
+        meta["source_file"] = source_target.name
         (path / "sample.lab").write_text(transcript_text, encoding="utf-8")
         meta["transcript_validation"] = self._validate_transcript(transcript_text, meta.get("duration_sec"))
         save_reference_meta(path, meta)
@@ -115,13 +115,16 @@ class ReferenceService:
             channels=self.channels,
         )
         for existing in path.iterdir():
-            if existing.is_file() and existing.name not in {"sample.lab", "reference.json", target.name}:
+            if existing.is_file() and existing.name not in {"sample.lab", "reference.json", target.name} and not existing.name.startswith("source."):
                 existing.unlink()
         final_target = path / "sample.wav"
         if final_target.exists() and final_target != target:
             final_target.unlink()
         target.replace(final_target)
         new_meta["audio_file"] = final_target.name
+        source_audio = next((candidate for candidate in sorted(path.iterdir()) if candidate.is_file() and candidate.name.startswith("source.")), None)
+        if source_audio is not None:
+            new_meta["source_file"] = source_audio.name
         transcript = (path / "sample.lab").read_text(encoding="utf-8", errors="replace") if (path / "sample.lab").exists() else ""
         new_meta["transcript_validation"] = self._validate_transcript(transcript, new_meta.get("duration_sec"))
         save_reference_meta(path, new_meta)
@@ -159,6 +162,9 @@ class ReferenceService:
 
     @staticmethod
     def _audio_file(path: Path) -> Path | None:
+        sample = path / "sample.wav"
+        if sample.exists():
+            return sample
         return next((p for p in sorted(path.iterdir()) if p.suffix.lower() in AUDIO_EXTENSIONS), None)
 
     def _validate_transcript(self, transcript: str, duration_sec: float | None) -> dict:

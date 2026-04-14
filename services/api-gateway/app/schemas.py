@@ -130,7 +130,7 @@ class OpenAIAudioSpeechRequest(BaseModel):
     initial_codec_chunk_frames: int | None = None
     x_vector_only_mode: bool | None = Field(
         default=None,
-        description="For vllm-omni Fish Speech: use speaker embedding only and skip transcript-based in-context cloning.",
+        description="For vllm-omni Fish Speech: prefer speaker-embedding-heavy conditioning. The saved reference transcript is still required.",
     )
 
 

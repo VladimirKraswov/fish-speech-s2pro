@@ -121,7 +121,8 @@
 - `input` -> текст для синтеза
 - `voice` -> `reference_id` для `fish`, либо нативный `voice` для `vllm-omni`
 - для Fish Speech через `vllm-omni` upstream-путь использует `voice="default"` и cloning через `reference_id -> ref_audio/ref_text`
-- `x_vector_only_mode=true` на `vllm-omni` переключает cloning в speaker-embedding-only режим без transcript-based ICL
+- для сохранённых `reference_id` на `vllm-omni` runtime сначала пытается синхронизировать reference как uploaded voice через `/v1/audio/voices`, чтобы получить более стабильный cloning; если это не удалось, остаётся fallback на inline `ref_audio/ref_text`
+- `x_vector_only_mode=true` на `vllm-omni` даёт speaker-embedding-heavy режим, но transcript reference-а для Fish Speech всё равно должен быть доступен
 - `response_format` -> пока только `wav`
 
 `GET /api/synthesis/capabilities` и `GET /v1/render/capabilities` отдают не только дефолты runtime, но и `supported_request_fields`, чтобы клиент мог программно понять, какие render-параметры доступны:

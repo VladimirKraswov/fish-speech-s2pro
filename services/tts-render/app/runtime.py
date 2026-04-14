@@ -2,6 +2,8 @@ import asyncio
 import base64
 import gc
 from dataclasses import replace
+import hashlib
+import json
 import logging
 import os
 from pathlib import Path
@@ -11,6 +13,7 @@ import subprocess
 import threading
 import time
 from typing import Any, Protocol
+from urllib.parse import quote
 
 import httpx
 import torch
@@ -533,6 +536,8 @@ class VllmOmniRuntime:
                 detail = response.json().get("detail") or detail
             except Exception:
                 pass
+            if 400 <= response.status_code < 500:
+                raise ValueError(detail or "vllm-omni rejected the synthesis request")
             raise RuntimeError(detail or "vllm-omni synthesis failed")
         return response.content
 
@@ -706,7 +711,11 @@ class VllmOmniRuntime:
 
     def _build_request(self, payload: dict, text: str) -> dict:
         x_vector_only_mode = bool(payload.get("x_vector_only_mode"))
-        reference = self._resolve_reference(payload, x_vector_only_mode=x_vector_only_mode)
+        reference_id = str(payload.get("reference_id") or "").strip()
+        uploaded_voice = None
+        if reference_id and not x_vector_only_mode and not payload.get("references"):
+            uploaded_voice = self._maybe_prepare_uploaded_voice(reference_id)
+        reference = None if uploaded_voice else self._resolve_reference(payload)
         request_payload: dict[str, Any] = {
             "input": text,
             "response_format": "wav",
@@ -715,7 +724,7 @@ class VllmOmniRuntime:
         # Fish Speech examples in upstream docs always set voice="default"
         # for plain TTS and for ref_audio/ref_text cloning. We still allow an
         # explicit voice override for advanced callers using uploaded voices.
-        voice = str(payload.get("voice") or "").strip() or "default"
+        voice = uploaded_voice or str(payload.get("voice") or "").strip() or "default"
         request_payload["voice"] = voice
 
         for key, caster in (
@@ -740,15 +749,26 @@ class VllmOmniRuntime:
 
         if reference:
             request_payload["ref_audio"] = reference["audio"]
-            if not x_vector_only_mode and reference.get("text"):
+            if reference.get("text"):
                 request_payload["ref_text"] = reference["text"]
 
         return request_payload
 
-    def _resolve_reference(self, payload: dict, *, x_vector_only_mode: bool = False) -> dict[str, str] | None:
+    def _maybe_prepare_uploaded_voice(self, reference_id: str) -> str | None:
+        try:
+            return self._ensure_uploaded_voice(reference_id)
+        except Exception as exc:
+            logger.warning(
+                "Uploaded voice sync failed, falling back to inline Fish cloning | reference_id=%s | detail=%s",
+                reference_id,
+                exc,
+            )
+            return None
+
+    def _resolve_reference(self, payload: dict) -> dict[str, str] | None:
         reference_id = str(payload.get("reference_id") or "").strip()
         if reference_id:
-            return self._saved_reference(reference_id, require_text=not x_vector_only_mode)
+            return self._saved_reference(reference_id)
 
         refs = payload.get("references") or []
         if not refs:
@@ -759,10 +779,10 @@ class VllmOmniRuntime:
 
         explicit_reference_id = str(first.get("reference_id") or "").strip()
         if explicit_reference_id:
-            return self._saved_reference(explicit_reference_id, require_text=not x_vector_only_mode)
+            return self._saved_reference(explicit_reference_id)
 
         text = str(first.get("text") or first.get("transcript") or first.get("ref_text") or "").strip()
-        if not text and not x_vector_only_mode:
+        if not text:
             raise ValueError("Explicit reference must include text/transcript/ref_text")
 
         audio = (
@@ -780,26 +800,159 @@ class VllmOmniRuntime:
 
         return {"audio": self._normalize_audio_reference(audio, first.get("mime_type")), "text": text}
 
-    def _saved_reference(self, reference_id: str, *, require_text: bool = True) -> dict[str, str]:
+    def _saved_reference(self, reference_id: str) -> dict[str, str]:
+        assets = self._saved_reference_assets(reference_id)
+        return {"audio": self._file_to_data_url(assets["upload_audio_path"]), "text": assets["text"]}
+
+    def _saved_reference_assets(self, reference_id: str) -> dict[str, Any]:
         reference_dir = self.settings.references_root / reference_id
         if not reference_dir.exists():
             raise ValueError(f"Reference does not exist: {reference_id}")
 
-        audio_path = next(
-            (path for path in sorted(reference_dir.iterdir()) if path.suffix.lower() in AUDIO_EXTENSIONS),
-            None,
-        )
+        meta_path = reference_dir / "reference.json"
+        meta: dict[str, Any] = {}
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {}
+
+        sample_path = reference_dir / "sample.wav"
+        source_name = str(meta.get("source_file") or "").strip()
+        source_path = reference_dir / source_name if source_name else None
+        if source_path is not None and not source_path.exists():
+            source_path = None
+        if source_path is None:
+            source_path = next(
+                (
+                    path
+                    for path in sorted(reference_dir.iterdir())
+                    if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS and path.name.startswith("source.")
+                ),
+                None,
+            )
+
+        audio_path = source_path or (sample_path if sample_path.exists() else None)
+        if audio_path is None:
+            audio_path = next(
+                (path for path in sorted(reference_dir.iterdir()) if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS),
+                None,
+            )
         if audio_path is None:
             raise ValueError(f"Reference audio does not exist: {reference_id}")
 
         transcript_path = reference_dir / "sample.lab"
-        if require_text and not transcript_path.exists():
+        if not transcript_path.exists():
             raise ValueError(f"Reference transcript does not exist: {reference_id}")
-        transcript = transcript_path.read_text(encoding="utf-8", errors="replace").strip() if transcript_path.exists() else ""
-        if require_text and not transcript:
+        transcript = transcript_path.read_text(encoding="utf-8", errors="replace").strip()
+        if not transcript:
             raise ValueError(f"Reference transcript is empty: {reference_id}")
 
-        return {"audio": self._file_to_data_url(audio_path), "text": transcript}
+        return {
+            "audio_path": audio_path,
+            "upload_audio_path": audio_path,
+            "text": transcript,
+        }
+
+    def _ensure_uploaded_voice(self, reference_id: str) -> str:
+        assets = self._saved_reference_assets(reference_id)
+        voice_prefix = self._uploaded_voice_prefix(reference_id)
+        voice_name = self._uploaded_voice_name(reference_id, assets)
+        endpoint = f"{self._base_url}/v1/audio/voices"
+
+        with httpx.Client(timeout=120) as client:
+            uploaded_voices: list[dict[str, Any]] = []
+            response = client.get(endpoint)
+            if response.status_code < 400:
+                try:
+                    payload = response.json()
+                except Exception:
+                    payload = {}
+                uploaded_voices = list(payload.get("uploaded_voices") or [])
+            elif response.status_code not in {404, 405}:
+                detail = response.text
+                try:
+                    detail = response.json().get("detail") or detail
+                except Exception:
+                    pass
+                raise RuntimeError(detail or "Failed to inspect uploaded voices")
+
+            existing_voice = next(
+                (
+                    voice
+                    for voice in uploaded_voices
+                    if str(voice.get("name") or "") == voice_name
+                ),
+                None,
+            )
+            if existing_voice and str(existing_voice.get("ref_text") or "").strip() == assets["text"]:
+                return voice_name
+
+            for stale_voice in uploaded_voices:
+                stale_name = str(stale_voice.get("name") or "")
+                if not stale_name.startswith(f"{voice_prefix}-"):
+                    continue
+                if stale_name == voice_name:
+                    continue
+                delete_response = client.delete(f"{endpoint}/{quote(stale_name, safe='')}")
+                if delete_response.status_code >= 400 and delete_response.status_code != 404:
+                    detail = delete_response.text
+                    try:
+                        detail = delete_response.json().get("detail") or detail
+                    except Exception:
+                        pass
+                    raise RuntimeError(detail or f"Failed to replace uploaded voice '{stale_name}'")
+
+            if existing_voice:
+                delete_response = client.delete(f"{endpoint}/{quote(voice_name, safe='')}")
+                if delete_response.status_code >= 400 and delete_response.status_code != 404:
+                    detail = delete_response.text
+                    try:
+                        detail = delete_response.json().get("detail") or detail
+                    except Exception:
+                        pass
+                    raise RuntimeError(detail or f"Failed to replace uploaded voice '{voice_name}'")
+
+            audio_path = Path(str(assets["upload_audio_path"]))
+            mime = AUDIO_MIME_TYPES.get(audio_path.suffix.lower(), "application/octet-stream")
+            with audio_path.open("rb") as audio_file:
+                upload_response = client.post(
+                    endpoint,
+                    data={
+                        "name": voice_name,
+                        "consent": f"saved-reference:{reference_id}",
+                        "ref_text": assets["text"],
+                    },
+                    files={
+                        "audio_sample": (audio_path.name, audio_file, mime),
+                    },
+                )
+
+            if upload_response.status_code >= 400:
+                detail = upload_response.text
+                try:
+                    detail = upload_response.json().get("detail") or detail
+                except Exception:
+                    pass
+                if 400 <= upload_response.status_code < 500:
+                    raise ValueError(detail or f"Failed to upload reference voice '{reference_id}'")
+                raise RuntimeError(detail or f"Failed to upload reference voice '{reference_id}'")
+        logger.info("Uploaded Fish Speech reference voice synced | reference_id=%s | voice=%s", reference_id, voice_name)
+        return voice_name
+
+    @staticmethod
+    def _uploaded_voice_prefix(reference_id: str) -> str:
+        sanitized = re.sub(r"[^a-zA-Z0-9_.-]+", "-", reference_id).strip("-")
+        return f"saved-ref-{sanitized or 'voice'}"
+
+    @classmethod
+    def _uploaded_voice_name(cls, reference_id: str, assets: dict[str, Any]) -> str:
+        audio_path = Path(str(assets["upload_audio_path"]))
+        stat = audio_path.stat()
+        fingerprint = hashlib.sha1(
+            f"{audio_path.name}:{stat.st_size}:{stat.st_mtime_ns}:{assets['text']}".encode("utf-8")
+        ).hexdigest()[:10]
+        return f"{cls._uploaded_voice_prefix(reference_id)}-{fingerprint}"
 
     def _normalize_audio_reference(self, audio: Any, mime_type: Any = None) -> str:
         value = str(audio or "").strip()
