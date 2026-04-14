@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+import logging
 import time
 
 import httpx
@@ -51,6 +52,7 @@ references = ReferenceService(
     channels=settings.reference_channels,
 )
 models = ModelService(settings, events)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -376,24 +378,26 @@ async def _fetch_audio(payload: dict, live: bool) -> bytes:
     if live and not settings.live_enabled:
         raise HTTPException(status_code=409, detail="Live runtime is disabled.")
     prepared_payload = dict(payload)
-    if not live and (prepared_payload.get("reference_id") or prepared_payload.get("references")):
+    if not live and prepared_payload.get("reference_id"):
         # Fish Speech reference conditioning is noticeably more stable for saved
         # references when we avoid reusing memory cache across requests.
         prepared_payload["use_memory_cache"] = "off"
     if not live and payload.get("reference_id"):
         try:
             await asyncio.to_thread(references.ensure_runtime_ready, str(payload.get("reference_id")))
-            if not prepared_payload.get("references"):
-                prepared_payload["references"] = [
-                    await asyncio.to_thread(references.render_payload, str(payload.get("reference_id")))
-                ]
-            # Use explicit reference payloads for render runtime to keep target text
-            # separate from saved reference transcript all the way to Fish Speech.
-            prepared_payload["reference_id"] = None
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not live:
+        logger.info(
+            "gateway render request | ref_id=%s | explicit_refs=%s | cache=%s | text_len=%s | text_preview=%r",
+            prepared_payload.get("reference_id"),
+            len(prepared_payload.get("references") or []),
+            prepared_payload.get("use_memory_cache"),
+            len(str(prepared_payload.get("text", ""))),
+            str(prepared_payload.get("text", ""))[:160],
+        )
     url = f"{settings.live_url if live else settings.render_url}/internal/synthesize"
     async with httpx.AsyncClient(timeout=3600) as client:
         response = await client.post(url, json=prepared_payload)

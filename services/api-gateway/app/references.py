@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import base64
 from pathlib import Path
 import shutil
 
@@ -110,17 +108,6 @@ class ReferenceService:
         if not audio:
             raise ValueError(f"Reference audio does not exist: {path.name}")
         return audio
-
-    def render_payload(self, name: str) -> dict:
-        data = self.get(name)
-        audio = self.audio_path(name)
-        transcript = str(data.get("transcript", "")).strip()
-        if not transcript:
-            raise ValueError(f"Reference transcript does not exist: {name}")
-        return {
-            "audio_b64": base64.b64encode(audio.read_bytes()).decode("ascii"),
-            "text": transcript,
-        }
 
     def _dir(self, name: str, create: bool = False) -> Path:
         path = self.root / ensure_name(name, "Reference name")
