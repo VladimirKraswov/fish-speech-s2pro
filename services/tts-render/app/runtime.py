@@ -426,7 +426,7 @@ class VllmOmniRuntime:
         self._process: subprocess.Popen | None = None
         self._ready = False
         self._error = ""
-        self._active_model_source = settings.vllm_omni_model
+        self._active_model_source = self._default_model_source()
         self._active_model_path = str(settings.model_path)
 
     async def startup(self):
@@ -539,6 +539,14 @@ class VllmOmniRuntime:
     @property
     def _base_url(self) -> str:
         return f"http://{self.settings.vllm_omni_host}:{self.settings.vllm_omni_port}"
+
+    def _default_model_source(self) -> str:
+        local_model_path = Path(self.settings.model_path)
+        if local_model_path.exists() and local_model_path.is_dir():
+            required_files = ("config.json", "tokenizer.json", "codec.pth")
+            if all((local_model_path / name).exists() for name in required_files):
+                return str(local_model_path)
+        return str(self.settings.vllm_omni_model).strip()
 
     async def _start_server(self, model_source: str, display_path: str) -> None:
         await self._stop_server()
