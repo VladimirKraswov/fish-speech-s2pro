@@ -200,6 +200,13 @@ async def save_reference(name: str = Form(...), transcript: str = Form(...), rep
     return data
 
 
+@api.put("/references/{name}/transcript", response_model=ReferenceRecord)
+async def update_reference_transcript(name: str, payload: TranscriptUpdateRequest):
+    data = await asyncio.to_thread(references.update_transcript, name, payload.transcript)
+    await events.publish("reference.saved", {"reference": data})
+    return data
+
+
 @api.delete("/references/{name}")
 async def delete_reference(name: str):
     data = references.delete(name)
@@ -385,6 +392,7 @@ async def _fetch_audio(payload: dict, live: bool) -> bytes:
     if not live and payload.get("reference_id"):
         try:
             await asyncio.to_thread(references.ensure_runtime_ready, str(payload.get("reference_id")))
+            await asyncio.to_thread(references.assert_synthesis_safe, str(payload.get("reference_id")))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:
@@ -536,6 +544,11 @@ async def v1_save_reference(
     audio_file: UploadFile = File(...),
 ):
     return await save_reference(name=name, transcript=transcript, replace=replace, audio_file=audio_file)
+
+
+@v1.put("/render/references/{name}/transcript", response_model=ReferenceRecord)
+async def v1_update_reference_transcript(name: str, payload: TranscriptUpdateRequest):
+    return await update_reference_transcript(name, payload)
 
 
 @v1.delete("/render/references/{name}")

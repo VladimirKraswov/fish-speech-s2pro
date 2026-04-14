@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+import re
 import shutil
 
 from shared.filesystem import AUDIO_EXTENSIONS, ensure_file_name, ensure_name, save_upload
@@ -7,6 +8,11 @@ from .reference_audio import load_reference_meta, normalize_reference_audio, pro
 
 
 class ReferenceService:
+    MAX_TRANSCRIPT_CHARS_PER_SECOND = 32
+    MAX_TRANSCRIPT_WORDS_PER_SECOND = 5
+    MIN_TRANSCRIPT_CHAR_LIMIT = 180
+    MIN_TRANSCRIPT_WORD_LIMIT = 28
+
     def __init__(self, root: Path, *, max_seconds: int = 12, sample_rate: int = 24000, channels: int = 1) -> None:
         self.root = root
         self.max_seconds = max_seconds
@@ -22,15 +28,17 @@ class ReferenceService:
         audio = self._audio_file(path)
         lab = path / "sample.lab"
         meta = load_reference_meta(path)
+        transcript = lab.read_text(encoding="utf-8", errors="replace") if lab.exists() else ""
         if audio and "duration_sec" not in meta:
             duration = probe_duration(audio)
             if duration:
                 meta["duration_sec"] = round(duration, 3)
+        meta["transcript_validation"] = self._validate_transcript(transcript, meta.get("duration_sec"))
         return {
             "name": path.name,
             "path": str(path),
             "audio_file": audio.name if audio else None,
-            "transcript": lab.read_text(encoding="utf-8", errors="replace") if lab.exists() else "",
+            "transcript": transcript,
             "reference_meta": meta,
         }
 
@@ -59,6 +67,24 @@ class ReferenceService:
         )
         source_target.unlink(missing_ok=True)
         (path / "sample.lab").write_text(transcript_text, encoding="utf-8")
+        meta["transcript_validation"] = self._validate_transcript(transcript_text, meta.get("duration_sec"))
+        save_reference_meta(path, meta)
+        return self.get(name)
+
+    def update_transcript(self, name: str, transcript: str) -> dict:
+        path = self._dir(name)
+        transcript_text = str(transcript or "").strip()
+        if not transcript_text:
+            raise ValueError("Reference transcript is required.")
+        (path / "sample.lab").write_text(transcript_text, encoding="utf-8")
+        meta = load_reference_meta(path)
+        if "duration_sec" not in meta:
+            audio = self._audio_file(path)
+            if audio:
+                duration = probe_duration(audio)
+                if duration:
+                    meta["duration_sec"] = round(duration, 3)
+        meta["transcript_validation"] = self._validate_transcript(transcript_text, meta.get("duration_sec"))
         save_reference_meta(path, meta)
         return self.get(name)
 
@@ -93,8 +119,21 @@ class ReferenceService:
                 existing.unlink()
         target.rename(path / "sample.wav")
         new_meta["audio_file"] = "sample.wav"
+        transcript = (path / "sample.lab").read_text(encoding="utf-8", errors="replace") if (path / "sample.lab").exists() else ""
+        new_meta["transcript_validation"] = self._validate_transcript(transcript, new_meta.get("duration_sec"))
         save_reference_meta(path, new_meta)
         return self.get(name)
+
+    def assert_synthesis_safe(self, name: str) -> dict:
+        data = self.get(name)
+        validation = (data.get("reference_meta") or {}).get("transcript_validation") or {}
+        if validation.get("valid", True):
+            return data
+        detail = validation.get("message") or (
+            "Reference transcript does not look compatible with the uploaded audio. "
+            "Update the transcript so it matches the spoken reference exactly."
+        )
+        raise ValueError(detail)
 
     def delete(self, name: str) -> dict:
         path = self._dir(name)
@@ -118,3 +157,44 @@ class ReferenceService:
     @staticmethod
     def _audio_file(path: Path) -> Path | None:
         return next((p for p in sorted(path.iterdir()) if p.suffix.lower() in AUDIO_EXTENSIONS), None)
+
+    def _validate_transcript(self, transcript: str, duration_sec: float | None) -> dict:
+        text = str(transcript or "").strip()
+        chars = len(text)
+        words = len(re.findall(r"\S+", text))
+        result = {
+            "valid": True,
+            "message": "",
+            "chars": chars,
+            "words": words,
+            "duration_sec": round(float(duration_sec), 3) if duration_sec else None,
+            "max_chars": None,
+            "max_words": None,
+            "chars_per_second": None,
+            "words_per_second": None,
+        }
+        if not text:
+            result["valid"] = False
+            result["message"] = "Reference transcript is empty. Add the exact spoken text from the reference audio."
+            return result
+        if not duration_sec or duration_sec <= 0:
+            return result
+
+        max_chars = max(self.MIN_TRANSCRIPT_CHAR_LIMIT, int(round(duration_sec * self.MAX_TRANSCRIPT_CHARS_PER_SECOND)))
+        max_words = max(self.MIN_TRANSCRIPT_WORD_LIMIT, int(round(duration_sec * self.MAX_TRANSCRIPT_WORDS_PER_SECOND)))
+        chars_per_second = round(chars / duration_sec, 2)
+        words_per_second = round(words / duration_sec, 2)
+        result["max_chars"] = max_chars
+        result["max_words"] = max_words
+        result["chars_per_second"] = chars_per_second
+        result["words_per_second"] = words_per_second
+
+        if chars > max_chars or words > max_words:
+            result["valid"] = False
+            result["message"] = (
+                "Reference transcript is much longer than the uploaded audio. "
+                f"Audio is {duration_sec:.2f}s, but transcript has {chars} chars / {words} words. "
+                "Fish Speech may continue reading the reference transcript instead of only cloning the voice. "
+                "Replace the transcript with the exact text spoken in the reference audio."
+            )
+        return result
