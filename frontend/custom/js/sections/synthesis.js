@@ -12,6 +12,19 @@ const FALLBACK_DEFAULTS = Object.freeze({
   seed: null,
   normalize: true,
   use_memory_cache: "on",
+  x_vector_only_mode: false,
+});
+const VLLM_FALLBACK_DEFAULTS = Object.freeze({
+  voice: "default",
+  speed: 1.0,
+  temperature: 0.62,
+  top_p: 0.88,
+  seed: null,
+  language: "auto",
+  instructions: "",
+  max_new_tokens: 1024,
+  initial_codec_chunk_frames: 6,
+  x_vector_only_mode: false,
 });
 const FALLBACK_LIMITS = Object.freeze({
   max_text_length: 1500,
@@ -19,6 +32,33 @@ const FALLBACK_LIMITS = Object.freeze({
   reference_sample_rate: 24000,
   reference_channels: 1,
 });
+const FISH_SUPPORTED_FIELDS = Object.freeze([
+  "text",
+  "reference_id",
+  "references",
+  "chunk_length",
+  "top_p",
+  "repetition_penalty",
+  "temperature",
+  "seed",
+  "normalize",
+  "use_memory_cache",
+]);
+const VLLM_SUPPORTED_FIELDS = Object.freeze([
+  "text",
+  "voice",
+  "reference_id",
+  "references",
+  "speed",
+  "temperature",
+  "top_p",
+  "seed",
+  "language",
+  "instructions",
+  "max_new_tokens",
+  "initial_codec_chunk_frames",
+  "x_vector_only_mode",
+]);
 
 function safeParseSavedOptions(){
   try {
@@ -47,12 +87,41 @@ function finiteInteger(value, fallback){
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function synthEngine(){
+  return state.synthCapabilities?.engine || state.renderEngine || "fish";
+}
+
+function usingVllmOmni(){
+  return synthEngine() === "vllm-omni";
+}
+
+function fallbackDefaultsForEngine(){
+  return usingVllmOmni() ? VLLM_FALLBACK_DEFAULTS : FALLBACK_DEFAULTS;
+}
+
+function fallbackSupportedFieldsForEngine(){
+  return usingVllmOmni() ? VLLM_SUPPORTED_FIELDS : FISH_SUPPORTED_FIELDS;
+}
+
 function runtimeDefaults(){
-  return state.synthCapabilities?.defaults || FALLBACK_DEFAULTS;
+  return state.synthCapabilities?.defaults || fallbackDefaultsForEngine();
 }
 
 function runtimeLimits(){
   return state.synthCapabilities?.limits || FALLBACK_LIMITS;
+}
+
+function supportedRequestFields(){
+  return new Set(state.synthCapabilities?.supported_request_fields || fallbackSupportedFieldsForEngine());
+}
+
+function supportsRequestField(name){
+  return supportedRequestFields().has(name);
+}
+
+function referenceRecord(name){
+  if (!name) return null;
+  return state.references.find((item) => item.name === name) || null;
 }
 
 function ensureSynthOptions(){
@@ -71,6 +140,7 @@ function ensureSynthOptions(){
     use_memory_cache: String(source.use_memory_cache ?? defaults.use_memory_cache ?? FALLBACK_DEFAULTS.use_memory_cache),
     seedEnabled: Boolean(source.seedEnabled ?? false),
     seedValue: finiteInteger(source.seedValue, seedDefault),
+    x_vector_only_mode: Boolean(source.x_vector_only_mode ?? defaults.x_vector_only_mode ?? false),
   };
   state.synthSettingsInitialized = true;
   persistSynthOptions();
@@ -81,22 +151,13 @@ async function loadCapabilities(){
     state.synthCapabilities = await json("/api/synthesis/capabilities");
   } catch (error) {
     if (!state.synthCapabilities) {
+      const engine = synthEngine();
       state.synthCapabilities = {
+        engine,
         ready: true,
-        defaults: { ...FALLBACK_DEFAULTS },
+        defaults: { ...(engine === "vllm-omni" ? VLLM_FALLBACK_DEFAULTS : FALLBACK_DEFAULTS) },
         limits: { ...FALLBACK_LIMITS },
-        supported_request_fields: [
-          "text",
-          "reference_id",
-          "references",
-          "chunk_length",
-          "top_p",
-          "repetition_penalty",
-          "temperature",
-          "seed",
-          "normalize",
-          "use_memory_cache",
-        ],
+        supported_request_fields: [...(engine === "vllm-omni" ? VLLM_SUPPORTED_FIELDS : FISH_SUPPORTED_FIELDS)],
       };
     }
     if (!state.messages.synthesis) {
@@ -125,14 +186,30 @@ function resolvedLiveText(){
 
 function settingsSummary(){
   const options = state.synthOptions || {};
-  const seed = options.seedEnabled ? `seed ${options.seedValue}` : "seed runtime default";
-  return `Temperature ${options.temperature} · Top P ${options.top_p} · Repetition ${options.repetition_penalty} · Chunk ${options.chunk_length} · ${seed} · Normalize ${options.normalize ? "on" : "off"} · Cache ${options.use_memory_cache}`;
+  const parts = [];
+  if (supportsRequestField("temperature")) parts.push(`Temperature ${options.temperature}`);
+  if (supportsRequestField("top_p")) parts.push(`Top P ${options.top_p}`);
+  if (supportsRequestField("repetition_penalty")) parts.push(`Repetition ${options.repetition_penalty}`);
+  if (supportsRequestField("chunk_length")) parts.push(`Chunk ${options.chunk_length}`);
+  if (supportsRequestField("seed")) parts.push(options.seedEnabled ? `seed ${options.seedValue}` : "seed runtime default");
+  if (supportsRequestField("normalize")) parts.push(`Normalize ${options.normalize ? "on" : "off"}`);
+  if (supportsRequestField("use_memory_cache")) parts.push(`Cache ${options.use_memory_cache}`);
+  if (supportsRequestField("x_vector_only_mode")) parts.push(`X-vector only ${options.x_vector_only_mode ? "on" : "off"}`);
+  return parts.join(" · ");
 }
 
 function defaultsSummary(){
   const defaults = runtimeDefaults();
-  const seed = defaults.seed == null ? "runtime random/default" : defaults.seed;
-  return `Defaults: temp ${defaults.temperature}, top_p ${defaults.top_p}, repetition ${defaults.repetition_penalty}, chunk ${defaults.chunk_length}, seed ${seed}, normalize ${defaults.normalize ? "on" : "off"}, cache ${defaults.use_memory_cache}`;
+  const parts = [];
+  if (supportsRequestField("temperature")) parts.push(`temp ${defaults.temperature}`);
+  if (supportsRequestField("top_p")) parts.push(`top_p ${defaults.top_p}`);
+  if (supportsRequestField("repetition_penalty")) parts.push(`repetition ${defaults.repetition_penalty}`);
+  if (supportsRequestField("chunk_length")) parts.push(`chunk ${defaults.chunk_length}`);
+  if (supportsRequestField("seed")) parts.push(`seed ${defaults.seed == null ? "runtime random/default" : defaults.seed}`);
+  if (supportsRequestField("normalize")) parts.push(`normalize ${defaults.normalize ? "on" : "off"}`);
+  if (supportsRequestField("use_memory_cache")) parts.push(`cache ${defaults.use_memory_cache}`);
+  if (supportsRequestField("x_vector_only_mode")) parts.push(`x-vector only ${defaults.x_vector_only_mode ? "on" : "off"}`);
+  return `Defaults: ${parts.join(", ")}`;
 }
 
 function limitsSummary(){
@@ -144,6 +221,38 @@ function capabilitySummary(){
   const caps = state.synthCapabilities || {};
   const compile = caps.compile_enabled ? "compile on" : "compile off";
   return `${caps.device || "device ?"} · ${caps.dtype || "dtype ?"} · ${compile}`;
+}
+
+function heroCards(){
+  if (usingVllmOmni()) {
+    return [
+      { title: "Когда выбирать", text: "Быстрый итоговый TTS через vllm-omni, когда нужен нормальный WAV без прежнего обрезания." },
+      { title: "Что доступно", text: "Здесь реально применяются temperature, top_p, seed и X-vector only mode для проблемных reference." },
+      { title: "Что не применяется", text: "Fish-специфичные repetition penalty, chunk length, normalize text и memory cache в этом backend игнорируются." },
+    ];
+  }
+  return [
+    { title: "Когда выбирать", text: "Итоговый рендер, озвучка длинных фрагментов, работа с reference и повторяемый результат через seed." },
+    { title: "Что доступно", text: "Temperature, top_p, repetition penalty, chunk length, normalize, memory cache и фиксированный seed." },
+    { title: "Как быстрее начать", text: "Оставьте reference пустым для базового голоса или выберите сохранённый reference на вкладке References." },
+  ];
+}
+
+function advancedSettingsNotice(referenceValue){
+  if (!usingVllmOmni()) return "";
+  const record = referenceRecord(referenceValue);
+  const duration = Number(record?.reference_meta?.duration_sec || 0);
+  const referenceNote = referenceValue
+    ? (duration > 12
+      ? `Reference ${referenceValue} длится ${duration.toFixed(1)}s. Для vllm-omni cloning обычно стабильнее короткий чистый сэмпл на 6-12 секунд с точным transcript. Длинные reference чаще дают шёпот, роботизацию или бульканье.`
+      : "Если cloning уходит в шёпот или становится слишком роботизированным, попробуйте включить X-vector only mode. Этот режим меньше зависит от in-context cloning и часто стабильнее на проблемных reference.")
+    : "Для vllm-omni в этой карточке оставлены только реально рабочие ручки. Fish-настройки вроде chunk length и repetition penalty здесь не применяются.";
+  return `
+    <div class="message warn">
+      В этом backend реально используются только temperature, top_p, seed и X-vector only mode.
+    </div>
+    <div class="message warn">${escapeHtml(referenceNote)}</div>
+  `;
 }
 
 function updateSettingsSummary(){
@@ -185,14 +294,15 @@ function currentRenderPayload(extra = {}, referenceId = null, textValue = state.
     ...extra,
     text: textValue,
     reference_id: referenceId,
-    temperature: options.temperature,
-    top_p: options.top_p,
-    repetition_penalty: options.repetition_penalty,
-    chunk_length: options.chunk_length,
-    normalize: options.normalize,
-    use_memory_cache: options.use_memory_cache,
   };
-  if (options.seedEnabled) payload.seed = options.seedValue;
+  if (supportsRequestField("temperature")) payload.temperature = options.temperature;
+  if (supportsRequestField("top_p")) payload.top_p = options.top_p;
+  if (supportsRequestField("repetition_penalty")) payload.repetition_penalty = options.repetition_penalty;
+  if (supportsRequestField("chunk_length")) payload.chunk_length = options.chunk_length;
+  if (supportsRequestField("normalize")) payload.normalize = options.normalize;
+  if (supportsRequestField("use_memory_cache")) payload.use_memory_cache = options.use_memory_cache;
+  if (supportsRequestField("x_vector_only_mode")) payload.x_vector_only_mode = options.x_vector_only_mode;
+  if (supportsRequestField("seed") && options.seedEnabled) payload.seed = options.seedValue;
   return payload;
 }
 
@@ -259,13 +369,11 @@ function renderRenderTab(){
       ${renderModeHero({
         badge: renderBadges,
         title: "Synthesis",
-        tip: "Обычный render-режим даёт лучший итоговый WAV, поддерживает reference cloning и тонкие настройки.",
+        tip: usingVllmOmni()
+          ? "Текущий render backend работает через vllm-omni. Text-only путь уже стабилен, а cloning с reference чувствителен к длине и чистоте образца."
+          : "Обычный render-режим даёт лучший итоговый WAV, поддерживает reference cloning и тонкие настройки.",
         description: "Используйте этот режим, когда важнее качество, воспроизводимость и контроль над результатом, а не минимальная задержка.",
-        cards: [
-          { title: "Когда выбирать", text: "Итоговый рендер, озвучка длинных фрагментов, работа с reference и повторяемый результат через seed." },
-          { title: "Что доступно", text: "Temperature, top_p, repetition penalty, chunk length, normalize, memory cache и фиксированный seed." },
-          { title: "Как быстрее начать", text: "Оставьте reference пустым для базового голоса или выберите сохранённый reference на вкладке References." },
-        ],
+        cards: heroCards(),
       })}
       <div class="grid two">
         <div class="panel stack">
@@ -294,8 +402,11 @@ function renderRenderTab(){
               <input id="synth-model" value="${escapeHtml(state.activeModel || "")}" readonly>
             </label>
           </div>
+          ${advancedSettingsNotice(referenceValue)}
           <div class="helper-note">
-            Если вы только начали, используйте дефолтные настройки ниже. Обычно имеет смысл трогать только <strong>temperature</strong>, <strong>seed</strong> и иногда <strong>chunk length</strong>.
+            ${usingVllmOmni()
+              ? "Для vllm-omni обычно имеет смысл трогать только <strong>temperature</strong>, <strong>top_p</strong>, <strong>seed</strong> и при проблемном reference попробовать <strong>X-vector only mode</strong>."
+              : "Если вы только начали, используйте дефолтные настройки ниже. Обычно имеет смысл трогать только <strong>temperature</strong>, <strong>seed</strong> и иногда <strong>chunk length</strong>."}
           </div>
           <div class="card synth-advanced stack">
             <div class="row">
@@ -306,37 +417,44 @@ function renderRenderTab(){
               <button id="synth-reset" class="button ghost" ${state.synthJob.running ? "disabled" : ""}>Сбросить defaults</button>
             </div>
             <div class="grid three synth-grid">
-              <label class="field">
+              ${supportsRequestField("temperature") ? `<label class="field">
                 <span>${labelWithHelp("Temperature", "Управляет вариативностью. Ниже - стабильнее и спокойнее, выше - разнообразнее и смелее.")}</span>
                 <input id="synth-temperature" type="number" min="0" step="0.01" value="${options.temperature}">
-              </label>
-              <label class="field">
+              </label>` : ""}
+              ${supportsRequestField("top_p") ? `<label class="field">
                 <span>${labelWithHelp("Top P", "Ограничивает выбор вероятностной массы. Ниже - более консервативный результат.")}</span>
                 <input id="synth-top-p" type="number" min="0" max="1" step="0.01" value="${options.top_p}">
-              </label>
-              <label class="field">
+              </label>` : ""}
+              ${supportsRequestField("repetition_penalty") ? `<label class="field">
                 <span>${labelWithHelp("Repetition penalty", "Помогает бороться с повторами. Слишком высокое значение может сделать речь менее естественной.")}</span>
                 <input id="synth-repetition" type="number" min="0" step="0.01" value="${options.repetition_penalty}">
-              </label>
-              <label class="field">
+              </label>` : ""}
+              ${supportsRequestField("chunk_length") ? `<label class="field">
                 <span>${labelWithHelp("Chunk length", "Размер текстового куска для render. Меньше - безопаснее по памяти, больше - больше контекста за проход.")}</span>
                 <input id="synth-chunk-length" type="number" min="1" step="1" value="${options.chunk_length}">
-              </label>
-              <label class="field">
+              </label>` : ""}
+              ${supportsRequestField("use_memory_cache") ? `<label class="field">
                 <span>${labelWithHelp("Use memory cache", "Управляет промежуточным кешированием в runtime. Обычно оставляйте on, если не отлаживаете поведение.")}</span>
                 <select id="synth-memory-cache">
                   ${cacheModes().map((mode) => `<option value="${escapeHtml(mode)}" ${mode === options.use_memory_cache ? "selected" : ""}>${escapeHtml(mode)}</option>`).join("")}
                 </select>
-              </label>
-              <div class="field field-check">
+              </label>` : ""}
+              ${supportsRequestField("normalize") ? `<div class="field field-check">
                 <span>${labelWithHelp("Normalize text", "Нормализует числа, символы и служебные конструкции перед рендером.")}</span>
                 <label class="checkline">
                   <input id="synth-normalize" type="checkbox" ${options.normalize ? "checked" : ""}>
                   <span>Включить нормализацию перед render</span>
                 </label>
-              </div>
+              </div>` : ""}
+              ${supportsRequestField("x_vector_only_mode") ? `<div class="field field-check">
+                <span>${labelWithHelp("X-vector only mode", "Использует только speaker embedding из reference и меньше полагается на in-context cloning. Полезно, если голос уходит в тихий шёпот, роботизацию или бульканье.")}</span>
+                <label class="checkline">
+                  <input id="synth-x-vector-only" type="checkbox" ${options.x_vector_only_mode ? "checked" : ""}>
+                  <span>Использовать только speaker embedding</span>
+                </label>
+              </div>` : ""}
             </div>
-            <div class="grid two synth-seed-grid">
+            ${supportsRequestField("seed") ? `<div class="grid two synth-seed-grid">
               <div class="field field-check">
                 <span>${labelWithHelp("Seed", "Фиксирует случайность. С одинаковым текстом и параметрами помогает повторять результат.")}</span>
                 <label class="checkline">
@@ -348,7 +466,7 @@ function renderRenderTab(){
                 <span>${labelWithHelp("Seed value", "Число, которое будет отправлено в runtime, если фиксация seed включена.")}</span>
                 <input id="synth-seed" type="number" step="1" value="${options.seedValue}">
               </label>
-            </div>
+            </div>` : ""}
             <div class="compact">${escapeHtml(limitsSummary())}</div>
           </div>
           <div class="actions">
@@ -370,7 +488,9 @@ function renderRenderTab(){
             <div class="message warn">${escapeHtml(limitsSummary())}</div>
           </div>
           <div class="helper-note">
-            Для воспроизводимых тестов включите <strong>seed</strong>. Если текст начинает не помещаться в память, уменьшайте <strong>chunk length</strong> или сокращайте объём текста.
+            ${usingVllmOmni()
+              ? "Если reference начинает звучать слишком тихо или невнятно, сначала попробуйте <strong>X-vector only mode</strong>. Если не помогло, сделайте отдельный короткий reference на 6-12 секунд."
+              : "Для воспроизводимых тестов включите <strong>seed</strong>. Если текст начинает не помещаться в память, уменьшайте <strong>chunk length</strong> или сокращайте объём текста."}
           </div>
         </div>
       </div>
@@ -469,15 +589,28 @@ function renderLiveTab(){
 }
 
 function bindAdvancedSettings(){
-  qs("synth-reset").onclick = resetSynthOptions;
-  qs("synth-temperature").oninput = (event) => setOption("temperature", finiteNumber(event.target.value, FALLBACK_DEFAULTS.temperature));
-  qs("synth-top-p").oninput = (event) => setOption("top_p", finiteNumber(event.target.value, FALLBACK_DEFAULTS.top_p));
-  qs("synth-repetition").oninput = (event) => setOption("repetition_penalty", finiteNumber(event.target.value, FALLBACK_DEFAULTS.repetition_penalty));
-  qs("synth-chunk-length").oninput = (event) => setOption("chunk_length", finiteInteger(event.target.value, FALLBACK_DEFAULTS.chunk_length));
-  qs("synth-memory-cache").onchange = (event) => setOption("use_memory_cache", event.target.value || FALLBACK_DEFAULTS.use_memory_cache);
-  qs("synth-normalize").onchange = (event) => setOption("normalize", Boolean(event.target.checked));
-  qs("synth-seed-enabled").onchange = (event) => setOption("seedEnabled", Boolean(event.target.checked));
-  qs("synth-seed").oninput = (event) => setOption("seedValue", finiteInteger(event.target.value, 12345));
+  const defaults = runtimeDefaults();
+  const reset = qs("synth-reset");
+  const temperature = qs("synth-temperature");
+  const topP = qs("synth-top-p");
+  const repetition = qs("synth-repetition");
+  const chunkLength = qs("synth-chunk-length");
+  const memoryCache = qs("synth-memory-cache");
+  const normalize = qs("synth-normalize");
+  const seedEnabled = qs("synth-seed-enabled");
+  const seed = qs("synth-seed");
+  const xVectorOnly = qs("synth-x-vector-only");
+
+  if (reset) reset.onclick = resetSynthOptions;
+  if (temperature) temperature.oninput = (event) => setOption("temperature", finiteNumber(event.target.value, defaults.temperature ?? FALLBACK_DEFAULTS.temperature));
+  if (topP) topP.oninput = (event) => setOption("top_p", finiteNumber(event.target.value, defaults.top_p ?? FALLBACK_DEFAULTS.top_p));
+  if (repetition) repetition.oninput = (event) => setOption("repetition_penalty", finiteNumber(event.target.value, defaults.repetition_penalty ?? FALLBACK_DEFAULTS.repetition_penalty));
+  if (chunkLength) chunkLength.oninput = (event) => setOption("chunk_length", finiteInteger(event.target.value, defaults.chunk_length ?? FALLBACK_DEFAULTS.chunk_length));
+  if (memoryCache) memoryCache.onchange = (event) => setOption("use_memory_cache", event.target.value || defaults.use_memory_cache || FALLBACK_DEFAULTS.use_memory_cache);
+  if (normalize) normalize.onchange = (event) => setOption("normalize", Boolean(event.target.checked));
+  if (seedEnabled) seedEnabled.onchange = (event) => setOption("seedEnabled", Boolean(event.target.checked));
+  if (seed) seed.oninput = (event) => setOption("seedValue", finiteInteger(event.target.value, defaults.seed ?? 12345));
+  if (xVectorOnly) xVectorOnly.onchange = (event) => setOption("x_vector_only_mode", Boolean(event.target.checked));
   updateSeedControls();
   updateSettingsSummary();
 }

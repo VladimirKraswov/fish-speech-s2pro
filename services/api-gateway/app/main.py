@@ -405,10 +405,24 @@ async def _fetch_audio(payload: dict, live: bool, job_id: str | None = None, str
     if live and not settings.live_enabled:
         raise HTTPException(status_code=409, detail="Live runtime is disabled.")
     prepared_payload = dict(payload)
+    render_engine = settings.render_engine or "fish"
+    supported_fields: set[str] = set()
+    if not live:
+        runtime = await _probe_status(settings.render_url)
+        render_engine = runtime.get("engine", render_engine)
+        supported_fields = _supported_render_request_fields(runtime, render_engine)
+        prepared_payload, ignored_fields = _filter_render_payload(prepared_payload, runtime, render_engine)
+        if ignored_fields:
+            logger.info(
+                "gateway render request filtered unsupported fields | engine=%s | fields=%s",
+                render_engine,
+                ",".join(sorted(ignored_fields)),
+            )
     if not live and prepared_payload.get("reference_id"):
         # Fish Speech reference conditioning is noticeably more stable for saved
         # references when we avoid reusing memory cache across requests.
-        prepared_payload["use_memory_cache"] = "off"
+        if "use_memory_cache" in supported_fields:
+            prepared_payload["use_memory_cache"] = "off"
     if not live and payload.get("reference_id"):
         try:
             await asyncio.to_thread(references.ensure_runtime_ready, str(payload.get("reference_id")))
@@ -682,6 +696,24 @@ def _payload_from_model(payload) -> dict:
     extra = getattr(payload, "model_extra", None) or {}
     data.update({key: value for key, value in extra.items() if value is not None})
     return data
+
+
+def _supported_render_request_fields(runtime: dict, engine: str) -> set[str]:
+    return set(runtime.get("supported_request_fields") or _default_render_request_fields(engine))
+
+
+def _filter_render_payload(payload: dict, runtime: dict, engine: str) -> tuple[dict, list[str]]:
+    supported_fields = _supported_render_request_fields(runtime, engine)
+    filtered: dict = {}
+    ignored: list[str] = []
+    for key, value in payload.items():
+        if value is None:
+            continue
+        if key in supported_fields:
+            filtered[key] = value
+        else:
+            ignored.append(key)
+    return filtered, ignored
 
 
 async def _payload_from_openai_request(payload: OpenAIAudioSpeechRequest) -> dict:
