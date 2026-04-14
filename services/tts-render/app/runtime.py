@@ -546,6 +546,9 @@ class VllmOmniRuntime:
         target = self._normalize_model_source(model_source)
         env = os.environ.copy()
         env.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
+        env["FISH_SPEECH_VLLM_OMNI_DAC_COMPAT"] = "1"
+        current_pythonpath = env.get("PYTHONPATH", "").strip()
+        env["PYTHONPATH"] = f"/app/app:{current_pythonpath}" if current_pythonpath else "/app/app"
         command = self._command(target)
         logger.info("Starting managed vllm-omni | model=%s | command=%s", target, " ".join(command))
         self._process = subprocess.Popen(command, cwd="/app", env=env)
@@ -667,6 +670,9 @@ class VllmOmniRuntime:
         target = self._normalize_model_source(model_source)
         env = os.environ.copy()
         env.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
+        env["FISH_SPEECH_VLLM_OMNI_DAC_COMPAT"] = "1"
+        current_pythonpath = env.get("PYTHONPATH", "").strip()
+        env["PYTHONPATH"] = f"/app/app:{current_pythonpath}" if current_pythonpath else "/app/app"
         command = self._command(target)
         self._process = subprocess.Popen(command, cwd="/app", env=env)
         deadline = time.monotonic() + max(self.settings.vllm_omni_start_timeout, 30)
