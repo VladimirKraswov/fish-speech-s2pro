@@ -376,6 +376,10 @@ async def _fetch_audio(payload: dict, live: bool) -> bytes:
     if live and not settings.live_enabled:
         raise HTTPException(status_code=409, detail="Live runtime is disabled.")
     prepared_payload = dict(payload)
+    if not live and (prepared_payload.get("reference_id") or prepared_payload.get("references")):
+        # Fish Speech reference conditioning is noticeably more stable for saved
+        # references when we avoid reusing memory cache across requests.
+        prepared_payload["use_memory_cache"] = "off"
     if not live and payload.get("reference_id"):
         try:
             await asyncio.to_thread(references.ensure_runtime_ready, str(payload.get("reference_id")))
