@@ -670,6 +670,7 @@ data: {"kind":"hello","payload":{"history":[...]}, "timestamp":"..."}
 RENDER_ENGINE=vllm-omni
 ENABLE_VLLM_OMNI=true
 RENDER_MAX_CONCURRENCY=2
+VLLM_OMNI_MODEL=fishaudio/s2-pro
 VLLM_OMNI_GPU_MEMORY_UTILIZATION=0.9
 VLLM_OMNI_EXTRA_ARGS=--max-num-seqs 2
 ```

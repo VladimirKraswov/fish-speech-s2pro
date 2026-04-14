@@ -8,6 +8,7 @@ import sys
 class Settings:
     render_engine: str
     model_path: Path
+    model_repo: str
     references_root: Path
     device: str
     dtype: str
@@ -25,6 +26,7 @@ class Settings:
     chunk_join_silence_ms: int
     vllm_omni_host: str
     vllm_omni_port: int
+    vllm_omni_model: str
     vllm_omni_gpu_memory_utilization: float
     vllm_omni_stage_configs_path: str
     vllm_omni_extra_args: str
@@ -46,6 +48,7 @@ def load_settings() -> Settings:
     return Settings(
         render_engine=os.getenv("RENDER_ENGINE", "fish").strip().lower(),
         model_path=Path(os.getenv("MODEL_PATH", "/app/data/checkpoints/s2-pro")),
+        model_repo=os.getenv("MODEL_REPO", "fishaudio/s2-pro").strip(),
         references_root=Path(os.getenv("REFERENCES_ROOT", "/app/references")),
         device=os.getenv("DEVICE", "cuda"),
         dtype=os.getenv("DTYPE", "bfloat16"),
@@ -63,6 +66,7 @@ def load_settings() -> Settings:
         chunk_join_silence_ms=int(os.getenv("CHUNK_JOIN_SILENCE_MS", "90")),
         vllm_omni_host=os.getenv("VLLM_OMNI_HOST", "127.0.0.1"),
         vllm_omni_port=int(os.getenv("VLLM_OMNI_PORT", "8091")),
+        vllm_omni_model=os.getenv("VLLM_OMNI_MODEL", "").strip() or os.getenv("MODEL_REPO", "fishaudio/s2-pro").strip(),
         vllm_omni_gpu_memory_utilization=float(os.getenv("VLLM_OMNI_GPU_MEMORY_UTILIZATION", "0.9")),
         vllm_omni_stage_configs_path=os.getenv("VLLM_OMNI_STAGE_CONFIGS_PATH", "").strip() or str(default_stage_config),
         vllm_omni_extra_args=os.getenv("VLLM_OMNI_EXTRA_ARGS", ""),

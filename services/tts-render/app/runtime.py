@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import threading
 import time
 from typing import Any, Protocol
 
@@ -421,16 +422,18 @@ class VllmOmniRuntime:
     def __init__(self, settings: Settings):
         self.settings = settings
         self._lock = asyncio.Lock()
+        self._sync_lock = threading.Lock()
         self._process: subprocess.Popen | None = None
         self._ready = False
         self._error = ""
-        self._active_model = str(settings.model_path)
+        self._active_model_source = settings.vllm_omni_model
+        self._active_model_path = str(settings.model_path)
 
     async def startup(self):
         async with self._lock:
             self._error = ""
             try:
-                await self._start_server(self._active_model)
+                await self._start_server(self._active_model_source, self._active_model_path)
             except Exception as exc:
                 self._error = str(exc)
                 logger.exception("Managed vllm-omni startup failed")
@@ -446,16 +449,17 @@ class VllmOmniRuntime:
             if not target:
                 raise ValueError("Model path is required.")
 
-            previous = self._active_model
+            previous_source = self._active_model_source
+            previous_path = self._active_model_path
             self._error = ""
             try:
-                await self._start_server(target)
+                await self._start_server(target, target)
             except Exception as exc:
                 self._error = str(exc)
                 logger.exception("Managed vllm-omni model switch failed")
-                if previous and previous != target:
+                if previous_source and previous_source != target:
                     try:
-                        await self._start_server(previous)
+                        await self._start_server(previous_source, previous_path)
                         self._error = ""
                     except Exception as restore_exc:
                         self._error = str(restore_exc)
@@ -464,9 +468,13 @@ class VllmOmniRuntime:
         return self.status()
 
     def status(self) -> dict:
+        ready, detail = self._backend_ready()
+        self._ready = ready
+        if detail:
+            self._error = detail
         return {
-            "active_model_path": self._active_model,
-            "ready": self._ready,
+            "active_model_path": self._active_model_path,
+            "ready": ready,
             "engine": "vllm-omni",
             "compile_enabled": False,
             "dtype": self.settings.dtype,
@@ -499,12 +507,11 @@ class VllmOmniRuntime:
                 "x_vector_only_mode": False,
             },
             "backend_url": self._base_url,
-            "detail": self._error,
+            "detail": detail or self._error,
         }
 
     def synthesize(self, payload: dict) -> bytes:
-        if not self._ready:
-            raise RuntimeError("Managed vllm-omni runtime is not ready")
+        self._ensure_backend_available()
 
         text = str(payload.get("text", ""))
         if not text.strip():
@@ -513,8 +520,13 @@ class VllmOmniRuntime:
             raise ValueError(f"Text is too long for render runtime: {len(text)} > {self.settings.max_text_length}")
 
         request_payload = self._build_request(payload, text)
-        with httpx.Client(timeout=3600) as client:
-            response = client.post(f"{self._base_url}/v1/audio/speech", json=request_payload)
+        try:
+            with httpx.Client(timeout=3600) as client:
+                response = client.post(f"{self._base_url}/v1/audio/speech", json=request_payload)
+        except httpx.HTTPError as exc:
+            self._ready = False
+            self._error = f"Managed vllm-omni backend is unreachable: {exc}"
+            raise RuntimeError(self._error) from exc
         if response.status_code >= 400:
             detail = response.text
             try:
@@ -528,7 +540,7 @@ class VllmOmniRuntime:
     def _base_url(self) -> str:
         return f"http://{self.settings.vllm_omni_host}:{self.settings.vllm_omni_port}"
 
-    async def _start_server(self, model_source: str) -> None:
+    async def _start_server(self, model_source: str, display_path: str) -> None:
         await self._stop_server()
         self._ready = False
         target = self._normalize_model_source(model_source)
@@ -542,7 +554,8 @@ class VllmOmniRuntime:
         except Exception:
             await self._stop_server()
             raise
-        self._active_model = target
+        self._active_model_source = target
+        self._active_model_path = str(display_path)
         self._ready = True
         logger.info("Managed vllm-omni ready | model=%s", target)
 
@@ -570,10 +583,10 @@ class VllmOmniRuntime:
                 raise RuntimeError(f"Managed vllm-omni exited with code {proc.returncode}")
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
-                    response = await client.get(f"{self._base_url}/health")
+                    response = await client.get(f"{self._base_url}/v1/models")
                 if response.status_code < 400:
                     return
-                last_error = f"/health returned {response.status_code}"
+                last_error = f"/v1/models returned {response.status_code}"
             except Exception as exc:
                 last_error = str(exc)
             await asyncio.sleep(2)
@@ -603,6 +616,79 @@ class VllmOmniRuntime:
         if extra_args:
             command.extend(shlex.split(extra_args))
         return command
+
+    def _backend_ready(self) -> tuple[bool, str]:
+        proc = self._process
+        if proc is not None and proc.poll() is not None:
+            return False, f"Managed vllm-omni exited with code {proc.returncode}"
+        try:
+            with httpx.Client(timeout=5) as client:
+                response = client.get(f"{self._base_url}/v1/models")
+            if response.status_code < 400:
+                return True, ""
+            return False, f"Managed vllm-omni readiness probe returned {response.status_code}"
+        except Exception as exc:
+            return False, f"Managed vllm-omni backend is unreachable: {exc}"
+
+    def _ensure_backend_available(self) -> None:
+        ready, detail = self._backend_ready()
+        if ready:
+            self._ready = True
+            self._error = ""
+            return
+
+        with self._sync_lock:
+            ready, detail = self._backend_ready()
+            if ready:
+                self._ready = True
+                self._error = ""
+                return
+            logger.warning("Managed vllm-omni is down, attempting restart | detail=%s", detail)
+            self._restart_server_blocking(self._active_model_source, self._active_model_path)
+            ready, detail = self._backend_ready()
+            if not ready:
+                self._ready = False
+                self._error = detail
+                raise RuntimeError(detail)
+            self._ready = True
+            self._error = ""
+
+    def _restart_server_blocking(self, model_source: str, display_path: str) -> None:
+        proc = self._process
+        self._process = None
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
+
+        target = self._normalize_model_source(model_source)
+        env = os.environ.copy()
+        env.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
+        command = self._command(target)
+        self._process = subprocess.Popen(command, cwd="/app", env=env)
+        deadline = time.monotonic() + max(self.settings.vllm_omni_start_timeout, 30)
+        last_error = ""
+        while time.monotonic() < deadline:
+            proc = self._process
+            if proc is not None and proc.poll() is not None:
+                raise RuntimeError(f"Managed vllm-omni exited with code {proc.returncode}")
+            try:
+                with httpx.Client(timeout=10) as client:
+                    response = client.get(f"{self._base_url}/v1/models")
+                if response.status_code < 400:
+                    self._active_model_source = target
+                    self._active_model_path = str(display_path)
+                    self._ready = True
+                    self._error = ""
+                    return
+                last_error = f"/v1/models returned {response.status_code}"
+            except Exception as exc:
+                last_error = str(exc)
+            time.sleep(2)
+        raise RuntimeError(f"Timed out waiting for managed vllm-omni to restart: {last_error or 'no response'}")
 
     def _build_request(self, payload: dict, text: str) -> dict:
         request_payload: dict[str, Any] = {
