@@ -24,7 +24,6 @@ const VLLM_FALLBACK_DEFAULTS = Object.freeze({
   instructions: "",
   max_new_tokens: 1024,
   initial_codec_chunk_frames: 6,
-  x_vector_only_mode: false,
 });
 const FALLBACK_LIMITS = Object.freeze({
   max_text_length: 1500,
@@ -57,7 +56,6 @@ const VLLM_SUPPORTED_FIELDS = Object.freeze([
   "instructions",
   "max_new_tokens",
   "initial_codec_chunk_frames",
-  "x_vector_only_mode",
 ]);
 
 function safeParseSavedOptions(){
@@ -194,7 +192,6 @@ function settingsSummary(){
   if (supportsRequestField("seed")) parts.push(options.seedEnabled ? `seed ${options.seedValue}` : "seed runtime default");
   if (supportsRequestField("normalize")) parts.push(`Normalize ${options.normalize ? "on" : "off"}`);
   if (supportsRequestField("use_memory_cache")) parts.push(`Cache ${options.use_memory_cache}`);
-  if (supportsRequestField("x_vector_only_mode")) parts.push(`X-vector only ${options.x_vector_only_mode ? "on" : "off"}`);
   return parts.join(" · ");
 }
 
@@ -208,7 +205,6 @@ function defaultsSummary(){
   if (supportsRequestField("seed")) parts.push(`seed ${defaults.seed == null ? "runtime random/default" : defaults.seed}`);
   if (supportsRequestField("normalize")) parts.push(`normalize ${defaults.normalize ? "on" : "off"}`);
   if (supportsRequestField("use_memory_cache")) parts.push(`cache ${defaults.use_memory_cache}`);
-  if (supportsRequestField("x_vector_only_mode")) parts.push(`x-vector only ${defaults.x_vector_only_mode ? "on" : "off"}`);
   return `Defaults: ${parts.join(", ")}`;
 }
 
@@ -227,7 +223,7 @@ function heroCards(){
   if (usingVllmOmni()) {
     return [
       { title: "Когда выбирать", text: "Быстрый итоговый TTS через vllm-omni, когда нужен нормальный WAV без прежнего обрезания." },
-      { title: "Что доступно", text: "Здесь реально применяются temperature, top_p, seed и X-vector only mode для проблемных reference." },
+      { title: "Что доступно", text: "Здесь реально применяются temperature, top_p и seed. Voice cloning с reference в текущем Fish Speech path у vllm-omni остаётся ограниченным." },
       { title: "Что не применяется", text: "Fish-специфичные repetition penalty, chunk length, normalize text и memory cache в этом backend игнорируются." },
     ];
   }
@@ -446,13 +442,6 @@ function renderRenderTab(){
                   <span>Включить нормализацию перед render</span>
                 </label>
               </div>` : ""}
-              ${supportsRequestField("x_vector_only_mode") ? `<div class="field field-check">
-                <span>${labelWithHelp("X-vector only mode", "Сильнее опирается на speaker embedding из reference и может помочь, если голос уходит в тихий шёпот, роботизацию или бульканье. Transcript reference-а для Fish Speech всё равно нужен.")}</span>
-                <label class="checkline">
-                  <input id="synth-x-vector-only" type="checkbox" ${options.x_vector_only_mode ? "checked" : ""}>
-                  <span>Использовать только speaker embedding</span>
-                </label>
-              </div>` : ""}
             </div>
             ${supportsRequestField("seed") ? `<div class="grid two synth-seed-grid">
               <div class="field field-check">
@@ -599,7 +588,6 @@ function bindAdvancedSettings(){
   const normalize = qs("synth-normalize");
   const seedEnabled = qs("synth-seed-enabled");
   const seed = qs("synth-seed");
-  const xVectorOnly = qs("synth-x-vector-only");
 
   if (reset) reset.onclick = resetSynthOptions;
   if (temperature) temperature.oninput = (event) => setOption("temperature", finiteNumber(event.target.value, defaults.temperature ?? FALLBACK_DEFAULTS.temperature));
@@ -610,7 +598,6 @@ function bindAdvancedSettings(){
   if (normalize) normalize.onchange = (event) => setOption("normalize", Boolean(event.target.checked));
   if (seedEnabled) seedEnabled.onchange = (event) => setOption("seedEnabled", Boolean(event.target.checked));
   if (seed) seed.oninput = (event) => setOption("seedValue", finiteInteger(event.target.value, defaults.seed ?? 12345));
-  if (xVectorOnly) xVectorOnly.onchange = (event) => setOption("x_vector_only_mode", Boolean(event.target.checked));
   updateSeedControls();
   updateSettingsSummary();
 }

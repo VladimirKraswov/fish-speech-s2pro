@@ -121,14 +121,13 @@
 - `input` -> текст для синтеза
 - `voice` -> `reference_id` для `fish`, либо нативный `voice` для `vllm-omni`
 - для Fish Speech через `vllm-omni` upstream-путь использует `voice="default"` и cloning через `reference_id -> ref_audio/ref_text`
-- для сохранённых `reference_id` на `vllm-omni` runtime сначала пытается синхронизировать reference как uploaded voice через `/v1/audio/voices`, чтобы получить более стабильный cloning; если это не удалось, остаётся fallback на inline `ref_audio/ref_text`
-- `x_vector_only_mode=true` на `vllm-omni` даёт speaker-embedding-heavy режим, но transcript reference-а для Fish Speech всё равно должен быть доступен
+- для Fish Speech через `vllm-omni` practical cloning path в этом проекте остаётся прямой `ref_audio/ref_text`; исходный uploaded файл reference теперь сохраняется отдельно как `source.*`, чтобы не терять качество при подготовке библиотеки reference-ов
 - `response_format` -> пока только `wav`
 
 `GET /api/synthesis/capabilities` и `GET /v1/render/capabilities` отдают не только дефолты runtime, но и `supported_request_fields`, чтобы клиент мог программно понять, какие render-параметры доступны:
 
 - `fish`: `reference_id`, `references`, `chunk_length`, `temperature`, `top_p`, `repetition_penalty`, `seed`, `normalize`, `use_memory_cache`
-- `vllm-omni`: `voice`, `reference_id`, `references`, `speed`, `temperature`, `top_p`, `seed`, `language`, `instructions`, `max_new_tokens`, `initial_codec_chunk_frames`, `x_vector_only_mode`
+- `vllm-omni`: `voice`, `reference_id`, `references`, `speed`, `temperature`, `top_p`, `seed`, `language`, `instructions`, `max_new_tokens`, `initial_codec_chunk_frames`
 
 Это даёт возможность работать с качественным `Fish render` программно, не повторяя логику фронтенда, и покрывает не только synthesis, но и `datasets`, `references`, `jobs`, `events`, `finetune`.
 

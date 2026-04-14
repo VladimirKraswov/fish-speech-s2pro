@@ -742,7 +742,6 @@ async def _payload_from_openai_request(payload: OpenAIAudioSpeechRequest) -> dic
         "instructions": payload.instructions if engine == "vllm-omni" else None,
         "max_new_tokens": payload.max_new_tokens if engine == "vllm-omni" else None,
         "initial_codec_chunk_frames": payload.initial_codec_chunk_frames if engine == "vllm-omni" else None,
-        "x_vector_only_mode": payload.x_vector_only_mode if engine == "vllm-omni" else None,
     }
     runtime_payload.update(
         {
@@ -761,7 +760,6 @@ async def _payload_from_openai_request(payload: OpenAIAudioSpeechRequest) -> dic
                 "instructions",
                 "max_new_tokens",
                 "initial_codec_chunk_frames",
-                "x_vector_only_mode",
             }
         }
     )
@@ -847,7 +845,6 @@ def _default_render_request_fields(engine: str) -> list[str]:
             "instructions",
             "max_new_tokens",
             "initial_codec_chunk_frames",
-            "x_vector_only_mode",
         ]
     return [
         "text",
@@ -875,7 +872,6 @@ def _default_render_defaults(engine: str) -> dict:
             "instructions": "",
             "max_new_tokens": 1024,
             "initial_codec_chunk_frames": 6,
-            "x_vector_only_mode": False,
         }
     return {
         "chunk_length": int(settings_env("CHUNK_LENGTH", "240")),

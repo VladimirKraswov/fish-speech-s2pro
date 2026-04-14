@@ -128,10 +128,6 @@ class OpenAIAudioSpeechRequest(BaseModel):
     instructions: str | None = None
     max_new_tokens: int | None = None
     initial_codec_chunk_frames: int | None = None
-    x_vector_only_mode: bool | None = Field(
-        default=None,
-        description="For vllm-omni Fish Speech: prefer speaker-embedding-heavy conditioning. The saved reference transcript is still required.",
-    )
 
 
 class SampleRecord(BaseModel):
