@@ -19,9 +19,12 @@ services:
       - ../references:/app/references
     environment:
       <<: *shared_env
+      RENDER_ENGINE: ${RENDER_ENGINE:-fish}
       REFERENCE_MAX_SECONDS: "${REFERENCE_MAX_SECONDS:-30}"
       REFERENCE_SAMPLE_RATE: "${REFERENCE_SAMPLE_RATE:-24000}"
       REFERENCE_CHANNELS: "${REFERENCE_CHANNELS:-1}"
+      RENDER_MAX_CONCURRENCY: "${RENDER_MAX_CONCURRENCY:-1}"
+      RENDER_MAX_QUEUE: "${RENDER_MAX_QUEUE:-8}"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8888/healthz"]
       interval: 30s

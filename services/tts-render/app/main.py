@@ -4,9 +4,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 
-from .runtime import FishRuntime
+from .runtime import create_runtime
+from .settings import load_settings
 
-runtime = FishRuntime()
+settings = load_settings()
+runtime = create_runtime(settings)
 
 
 @asynccontextmanager
@@ -23,7 +25,12 @@ async def healthz():
     status = runtime.status()
     if not status["ready"]:
         raise HTTPException(status_code=503, detail=status.get("detail") or "Render runtime is not ready")
-    return {"status": "ok", "ready": status["ready"], "engine": "fish", "detail": status.get("detail", "")}
+    return {
+        "status": "ok",
+        "ready": status["ready"],
+        "engine": status.get("engine", settings.render_engine),
+        "detail": status.get("detail", ""),
+    }
 
 
 @app.get("/internal/status")

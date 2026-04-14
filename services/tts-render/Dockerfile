@@ -25,6 +25,9 @@ FROM base AS prod
 
 ARG PYTORCH_CUDA_TAG=cu129
 ARG FISH_SPEECH_REF=main
+ARG ENABLE_VLLM_OMNI=true
+ARG VLLM_VERSION=0.18.0
+ARG VLLM_OMNI_VERSION=
 
 # Клонируем и устанавливаем Fish Speech один раз
 RUN git clone https://github.com/fishaudio/fish-speech.git /app/fish-speech \
@@ -34,6 +37,10 @@ WORKDIR /app/fish-speech
 RUN pip install torch torchaudio --index-url https://download.pytorch.org/whl/${PYTORCH_CUDA_TAG} \
     && pip install -e . \
     && pip install "huggingface_hub[cli]" fastapi uvicorn httpx python-multipart \
+    && if [ "${ENABLE_VLLM_OMNI}" = "true" ]; then \
+         pip install "vllm==${VLLM_VERSION}" \
+         && if [ -n "${VLLM_OMNI_VERSION}" ]; then pip install "vllm-omni==${VLLM_OMNI_VERSION}"; else pip install vllm-omni; fi; \
+       fi \
     && python -c "from fish_speech.inference_engine import TTSInferenceEngine; from fish_speech.models.dac.inference import load_model; from fish_speech.models.text2semantic.inference import launch_thread_safe_queue; assert hasattr(TTSInferenceEngine, 'inference') and callable(load_model) and callable(launch_thread_safe_queue)"
 
 WORKDIR /app
@@ -49,6 +56,9 @@ FROM base AS dev
 
 ARG PYTORCH_CUDA_TAG=cu129
 ARG FISH_SPEECH_REF=main
+ARG ENABLE_VLLM_OMNI=true
+ARG VLLM_VERSION=0.18.0
+ARG VLLM_OMNI_VERSION=
 
 # Те же зависимости, но без копирования кода (он будет монтироваться)
 RUN git clone https://github.com/fishaudio/fish-speech.git /app/fish-speech \
@@ -58,6 +68,10 @@ WORKDIR /app/fish-speech
 RUN pip install torch torchaudio --index-url https://download.pytorch.org/whl/${PYTORCH_CUDA_TAG} \
     && pip install -e . \
     && pip install "huggingface_hub[cli]" fastapi uvicorn httpx python-multipart \
+    && if [ "${ENABLE_VLLM_OMNI}" = "true" ]; then \
+         pip install "vllm==${VLLM_VERSION}" \
+         && if [ -n "${VLLM_OMNI_VERSION}" ]; then pip install "vllm-omni==${VLLM_OMNI_VERSION}"; else pip install vllm-omni; fi; \
+       fi \
     && python -c "from fish_speech.inference_engine import TTSInferenceEngine; from fish_speech.models.dac.inference import load_model; from fish_speech.models.text2semantic.inference import launch_thread_safe_queue; assert hasattr(TTSInferenceEngine, 'inference') and callable(load_model) and callable(launch_thread_safe_queue)"
 
 WORKDIR /app

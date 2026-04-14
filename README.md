@@ -263,11 +263,14 @@ curl -o /tmp/render.wav -X POST http://127.0.0.1:7777/v1/audio/speech \
 
 Важно:
 
-- `voice` в `/v1/audio/speech` маппится на `reference_id`
+- при `RENDER_ENGINE=fish` поле `voice` в `/v1/audio/speech` маппится на `reference_id`
+- при `RENDER_ENGINE=vllm-omni` поле `voice` уходит в нативный `vllm-omni` speech API, а `reference_id` остаётся отдельным saved reference
 - `response_format` сейчас поддерживается только `wav`
 - если хотите использовать другой render checkpoint, активировать его можно либо по имени через `POST /api/models/activate` / `POST /v1/render/models/activate`, либо прямым путём через `POST /api/render/models/activate`
 - `GET /api/synthesis/capabilities` и `GET /v1/render/capabilities` теперь возвращают `supported_request_fields`, где перечислены поддерживаемые render knobs
-- для render-запросов наружу доступны `reference_id`, `references`, `chunk_length`, `temperature`, `top_p`, `repetition_penalty`, `seed`, `normalize`, `use_memory_cache`
+- набор render knobs теперь зависит от backend-а:
+  - `fish`: `reference_id`, `references`, `chunk_length`, `temperature`, `top_p`, `repetition_penalty`, `seed`, `normalize`, `use_memory_cache`
+  - `vllm-omni`: `voice`, `reference_id`, `references`, `speed`, `temperature`, `top_p`, `seed`, `language`, `instructions`, `max_new_tokens`, `initial_codec_chunk_frames`, `x_vector_only_mode`
 - fine-tune сценарий тоже доступен через API: датасеты, валидация конфигурации, старт/стоп обучения, просмотр статуса и jobs
 
 ## Render profile
@@ -280,9 +283,11 @@ Render-only стек использует quality-first профиль:
 - `RENDER_STACK_CHUNK_LENGTH=240`
 - `OOM_RETRY_CHUNK_CHARS=140`
 - `CHUNK_JOIN_SILENCE_MS=90`
-- `REFERENCE_MAX_SECONDS=12`
+- `REFERENCE_MAX_SECONDS=30`
 - `REFERENCE_SAMPLE_RATE=24000`
 - `REFERENCE_CHANNELS=1`
+- `RENDER_MAX_CONCURRENCY=1`
+- `RENDER_MAX_QUEUE=8`
 - `NORMALIZE_TEXT=true`
 - `USE_MEMORY_CACHE=on`
 
@@ -291,6 +296,33 @@ Render-only стек использует quality-first профиль:
 - compile остаётся включён
 - профиль осторожнее по VRAM, чем compile+cudagraphs
 - длинные запросы переживают OOM заметно лучше благодаря автоматическому chunked retry
+- gateway держит управляемую очередь synthesis вместо бесконтрольного параллелизма
+
+### vLLM-Omni backend
+
+Для high-concurrency режима render теперь можно переключить backend на `vllm-omni`, сохранив тот же внешний gateway API.
+
+Опора для интеграции:
+
+- [Fish Speech S2 Pro - vLLM-Omni](https://docs.vllm.ai/projects/vllm-omni/en/latest/user_guide/examples/online_serving/fish_speech/)
+- [Speech API - vLLM-Omni](https://docs.vllm.ai/projects/vllm-omni/en/latest/serving/speech_api/)
+
+Минимальный набор переменных:
+
+```env
+RENDER_ENGINE=vllm-omni
+ENABLE_VLLM_OMNI=true
+RENDER_MAX_CONCURRENCY=2
+VLLM_OMNI_GPU_MEMORY_UTILIZATION=0.9
+VLLM_OMNI_EXTRA_ARGS=--max-num-seqs 2
+```
+
+Что важно:
+
+- `tts-render` в этом режиме поднимает managed `vllm-omni serve ...` внутри контейнера и продолжает отвечать по старому internal API
+- `reference_id` автоматически разворачивается в `ref_audio` + `ref_text`
+- смена render-модели через `/api/models/activate` остаётся доступной, но для `vllm-omni` это означает restart managed backend-а
+- fish-specific knobs (`chunk_length`, `normalize`, `use_memory_cache`, `repetition_penalty`) не применяются к `vllm-omni`; смотрите актуальный список через `/api/synthesis/capabilities`
 
 Если нужен ещё более быстрый synthesis и карта выдерживает больший VRAM-пик, можно в `.env` поменять:
 
@@ -316,6 +348,7 @@ PREPROCESS_PORT=7780
 FINETUNE_PORT=7781
 
 MODEL_PATH=/app/data/checkpoints/s2-pro
+RENDER_ENGINE=fish
 DTYPE=bfloat16
 ENABLE_COMPILE=false
 RENDER_STACK_ENABLE_COMPILE=true
@@ -324,14 +357,25 @@ CHUNK_LENGTH=240
 RENDER_STACK_CHUNK_LENGTH=240
 OOM_RETRY_CHUNK_CHARS=140
 CHUNK_JOIN_SILENCE_MS=90
-REFERENCE_MAX_SECONDS=12
+REFERENCE_MAX_SECONDS=30
 REFERENCE_SAMPLE_RATE=24000
 REFERENCE_CHANNELS=1
+RENDER_MAX_CONCURRENCY=1
+RENDER_MAX_QUEUE=8
 NORMALIZE_TEXT=true
 USE_MEMORY_CACHE=on
 TEMPERATURE=0.62
 TOP_P=0.88
 REPETITION_PENALTY=1.15
+ENABLE_VLLM_OMNI=true
+VLLM_VERSION=0.18.0
+VLLM_OMNI_VERSION=
+VLLM_OMNI_HOST=127.0.0.1
+VLLM_OMNI_PORT=8091
+VLLM_OMNI_GPU_MEMORY_UTILIZATION=0.9
+VLLM_OMNI_START_TIMEOUT=900
+VLLM_OMNI_STAGE_CONFIGS_PATH=
+VLLM_OMNI_EXTRA_ARGS=
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 ```
 
@@ -340,6 +384,7 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 - render-only bundle держит `torch.compile` включённым
 - более тяжёлая часть compile-конфигурации вынесена в opt-in через `COMPILE_CUDAGRAPHS=true`
 - длинные тексты страхуются через автоматический chunked retry
+- входящий render-трафик проходит через bounded queue в gateway; при переполнении возвращается `429`
 
 ## Обновление на сервере
 

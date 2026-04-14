@@ -8,6 +8,7 @@ from shared.config import app_paths, ensure_dirs
 @dataclass(frozen=True)
 class Settings:
     render_url: str
+    render_engine: str
     live_url: str
     preprocess_url: str
     finetune_url: str
@@ -22,6 +23,8 @@ class Settings:
     reference_max_seconds: int
     reference_sample_rate: int
     reference_channels: int
+    render_max_concurrency: int
+    render_max_queue: int
 
     def ensure_dirs(self) -> None:
         ensure_dirs(self.checkpoints_root, self.finetuned_root, self.training_root, self.references_root, self.logs_root)
@@ -35,6 +38,7 @@ def load_settings() -> Settings:
     paths = app_paths()
     return Settings(
         render_url=os.getenv("RENDER_URL", "http://tts-render:8888"),
+        render_engine=os.getenv("RENDER_ENGINE", "fish").strip().lower(),
         live_url=os.getenv("LIVE_URL", "http://tts-live:8888"),
         preprocess_url=os.getenv("PREPROCESS_URL", "http://text-preprocess:8888"),
         finetune_url=os.getenv("FINETUNE_URL", "http://finetune-api:8888"),
@@ -49,4 +53,6 @@ def load_settings() -> Settings:
         reference_max_seconds=int(os.getenv("REFERENCE_MAX_SECONDS", "30")),
         reference_sample_rate=int(os.getenv("REFERENCE_SAMPLE_RATE", "24000")),
         reference_channels=int(os.getenv("REFERENCE_CHANNELS", "1")),
+        render_max_concurrency=max(int(os.getenv("RENDER_MAX_CONCURRENCY", "1")), 1),
+        render_max_queue=max(int(os.getenv("RENDER_MAX_QUEUE", "8")), 0),
     )

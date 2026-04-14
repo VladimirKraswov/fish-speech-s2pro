@@ -12,6 +12,10 @@ services:
       context: ..
       dockerfile: services/tts-render/Dockerfile
       target: ${BUILD_TARGET:-prod}
+      args:
+        ENABLE_VLLM_OMNI: ${ENABLE_VLLM_OMNI:-true}
+        VLLM_VERSION: ${VLLM_VERSION:-0.18.0}
+        VLLM_OMNI_VERSION: ${VLLM_OMNI_VERSION:-}
     container_name: fish-speech-render
     restart: unless-stopped
     ports: ["${RENDER_PORT:-7778}:8888"]
@@ -20,7 +24,9 @@ services:
       - ../references:/app/references
     environment:
       <<: *shared_env
+      RENDER_ENGINE: ${RENDER_ENGINE:-fish}
       MODEL_PATH: ${MODEL_PATH:-/app/data/checkpoints/s2-pro}
+      REFERENCES_ROOT: /app/references
       ENABLE_COMPILE: "${ENABLE_COMPILE:-false}"
       DTYPE: "${DTYPE:-bfloat16}"
       DEVICE: "${DEVICE:-cuda}"
@@ -30,6 +36,12 @@ services:
       TEMPERATURE: "${TEMPERATURE:-0.62}"
       TOP_P: "${TOP_P:-0.88}"
       REPETITION_PENALTY: "${REPETITION_PENALTY:-1.15}"
+      VLLM_OMNI_HOST: "${VLLM_OMNI_HOST:-127.0.0.1}"
+      VLLM_OMNI_PORT: "${VLLM_OMNI_PORT:-8091}"
+      VLLM_OMNI_GPU_MEMORY_UTILIZATION: "${VLLM_OMNI_GPU_MEMORY_UTILIZATION:-0.9}"
+      VLLM_OMNI_STAGE_CONFIGS_PATH: "${VLLM_OMNI_STAGE_CONFIGS_PATH:-}"
+      VLLM_OMNI_START_TIMEOUT: "${VLLM_OMNI_START_TIMEOUT:-900}"
+      VLLM_OMNI_EXTRA_ARGS: "${VLLM_OMNI_EXTRA_ARGS:-}"
     gpus: all
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8888/healthz"]

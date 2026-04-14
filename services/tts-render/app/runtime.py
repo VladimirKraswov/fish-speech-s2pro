@@ -1,12 +1,17 @@
 import asyncio
+import base64
 import gc
 from dataclasses import replace
 import logging
+import os
 from pathlib import Path
 import re
+import shlex
+import subprocess
 import time
-from typing import Any
+from typing import Any, Protocol
 
+import httpx
 import torch
 
 from fish_speech.inference_engine import TTSInferenceEngine
@@ -15,14 +20,37 @@ from fish_speech.models.text2semantic.inference import launch_thread_safe_queue
 from fish_speech.utils.schema import ServeTTSRequest
 
 from .audio import audio_array_to_wav, concatenate_audio_segments, wav_seconds
-from .settings import load_settings
+from .settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
+AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".opus", ".m4a", ".aac"}
+AUDIO_MIME_TYPES = {
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/opus",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+}
+
+
+class RenderRuntime(Protocol):
+    async def startup(self): ...
+
+    async def shutdown(self): ...
+
+    async def switch_model(self, model_path: str) -> dict: ...
+
+    def status(self) -> dict: ...
+
+    def synthesize(self, payload: dict) -> bytes: ...
+
 
 class FishRuntime:
-    def __init__(self):
-        self.settings = load_settings()
+    def __init__(self, settings: Settings):
+        self.settings = settings
         self.engine: TTSInferenceEngine | None = None
         self._llama_queue: Any | None = None
         self._device = self._resolve_device(self.settings.device)
@@ -146,6 +174,27 @@ class FishRuntime:
             "compile_enabled": self._compile_enabled,
             "dtype": getattr(self._precision, "name", str(self._precision)).replace("torch.", ""),
             "device": self._device,
+            "supported_request_fields": [
+                "text",
+                "reference_id",
+                "references",
+                "chunk_length",
+                "top_p",
+                "repetition_penalty",
+                "temperature",
+                "seed",
+                "normalize",
+                "use_memory_cache",
+            ],
+            "defaults": {
+                "chunk_length": self.settings.chunk_length,
+                "temperature": self.settings.temperature,
+                "top_p": self.settings.top_p,
+                "repetition_penalty": self.settings.repetition_penalty,
+                "seed": self.settings.seed,
+                "normalize": self.settings.normalize,
+                "use_memory_cache": self.settings.use_memory_cache,
+            },
             "detail": self._error,
         }
 
@@ -366,3 +415,318 @@ class FishRuntime:
 
         flush()
         return chunks or [compact]
+
+
+class VllmOmniRuntime:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self._lock = asyncio.Lock()
+        self._process: subprocess.Popen | None = None
+        self._ready = False
+        self._error = ""
+        self._active_model = str(settings.model_path)
+
+    async def startup(self):
+        async with self._lock:
+            self._error = ""
+            try:
+                await self._start_server(self._active_model)
+            except Exception as exc:
+                self._error = str(exc)
+                logger.exception("Managed vllm-omni startup failed")
+
+    async def shutdown(self):
+        async with self._lock:
+            self._ready = False
+            await self._stop_server()
+
+    async def switch_model(self, model_path: str) -> dict:
+        async with self._lock:
+            target = str(model_path or "").strip()
+            if not target:
+                raise ValueError("Model path is required.")
+
+            previous = self._active_model
+            self._error = ""
+            try:
+                await self._start_server(target)
+            except Exception as exc:
+                self._error = str(exc)
+                logger.exception("Managed vllm-omni model switch failed")
+                if previous and previous != target:
+                    try:
+                        await self._start_server(previous)
+                        self._error = ""
+                    except Exception as restore_exc:
+                        self._error = str(restore_exc)
+                raise RuntimeError(self._error) from exc
+
+        return self.status()
+
+    def status(self) -> dict:
+        return {
+            "active_model_path": self._active_model,
+            "ready": self._ready,
+            "engine": "vllm-omni",
+            "compile_enabled": False,
+            "dtype": self.settings.dtype,
+            "device": self.settings.device,
+            "supported_request_fields": [
+                "text",
+                "voice",
+                "reference_id",
+                "references",
+                "speed",
+                "temperature",
+                "top_p",
+                "seed",
+                "language",
+                "instructions",
+                "max_new_tokens",
+                "initial_codec_chunk_frames",
+                "x_vector_only_mode",
+            ],
+            "defaults": {
+                "voice": "default",
+                "speed": 1.0,
+                "temperature": self.settings.temperature,
+                "top_p": self.settings.top_p,
+                "seed": self.settings.seed,
+                "language": "auto",
+                "instructions": "",
+                "max_new_tokens": 1024,
+                "initial_codec_chunk_frames": 6,
+                "x_vector_only_mode": False,
+            },
+            "backend_url": self._base_url,
+            "detail": self._error,
+        }
+
+    def synthesize(self, payload: dict) -> bytes:
+        if not self._ready:
+            raise RuntimeError("Managed vllm-omni runtime is not ready")
+
+        text = str(payload.get("text", ""))
+        if not text.strip():
+            raise ValueError("Text must not be empty")
+        if self.settings.max_text_length > 0 and len(text) > self.settings.max_text_length:
+            raise ValueError(f"Text is too long for render runtime: {len(text)} > {self.settings.max_text_length}")
+
+        request_payload = self._build_request(payload, text)
+        with httpx.Client(timeout=3600) as client:
+            response = client.post(f"{self._base_url}/v1/audio/speech", json=request_payload)
+        if response.status_code >= 400:
+            detail = response.text
+            try:
+                detail = response.json().get("detail") or detail
+            except Exception:
+                pass
+            raise RuntimeError(detail or "vllm-omni synthesis failed")
+        return response.content
+
+    @property
+    def _base_url(self) -> str:
+        return f"http://{self.settings.vllm_omni_host}:{self.settings.vllm_omni_port}"
+
+    async def _start_server(self, model_source: str) -> None:
+        await self._stop_server()
+        self._ready = False
+        target = self._normalize_model_source(model_source)
+        env = os.environ.copy()
+        env.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
+        command = self._command(target)
+        logger.info("Starting managed vllm-omni | model=%s | command=%s", target, " ".join(command))
+        self._process = subprocess.Popen(command, cwd="/app", env=env)
+        try:
+            await self._wait_until_ready()
+        except Exception:
+            await self._stop_server()
+            raise
+        self._active_model = target
+        self._ready = True
+        logger.info("Managed vllm-omni ready | model=%s", target)
+
+    async def _stop_server(self) -> None:
+        proc = self._process
+        self._process = None
+        if proc is None:
+            return
+        if proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            await asyncio.to_thread(proc.wait, timeout=20)
+        except subprocess.TimeoutExpired:
+            logger.warning("Managed vllm-omni did not stop gracefully, killing it")
+            proc.kill()
+            await asyncio.to_thread(proc.wait, timeout=10)
+
+    async def _wait_until_ready(self) -> None:
+        deadline = time.monotonic() + max(self.settings.vllm_omni_start_timeout, 30)
+        last_error = ""
+        while time.monotonic() < deadline:
+            proc = self._process
+            if proc is not None and proc.poll() is not None:
+                raise RuntimeError(f"Managed vllm-omni exited with code {proc.returncode}")
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    response = await client.get(f"{self._base_url}/health")
+                if response.status_code < 400:
+                    return
+                last_error = f"/health returned {response.status_code}"
+            except Exception as exc:
+                last_error = str(exc)
+            await asyncio.sleep(2)
+        raise RuntimeError(f"Timed out waiting for managed vllm-omni to become ready: {last_error or 'no response'}")
+
+    def _command(self, model_source: str) -> list[str]:
+        stage_configs = str(self.settings.vllm_omni_stage_configs_path).strip()
+        if not stage_configs:
+            raise ValueError("VLLM_OMNI_STAGE_CONFIGS_PATH must not be empty")
+        command = [
+            "vllm-omni",
+            "serve",
+            model_source,
+            "--host",
+            self.settings.vllm_omni_host,
+            "--port",
+            str(self.settings.vllm_omni_port),
+            "--stage-configs-path",
+            stage_configs,
+            "--gpu-memory-utilization",
+            str(self.settings.vllm_omni_gpu_memory_utilization),
+            "--trust-remote-code",
+            "--enforce-eager",
+            "--omni",
+        ]
+        extra_args = str(self.settings.vllm_omni_extra_args or "").strip()
+        if extra_args:
+            command.extend(shlex.split(extra_args))
+        return command
+
+    def _build_request(self, payload: dict, text: str) -> dict:
+        request_payload: dict[str, Any] = {
+            "input": text,
+            "response_format": "wav",
+            "voice": str(payload.get("voice") or "default"),
+        }
+
+        for key, caster in (
+            ("speed", float),
+            ("temperature", float),
+            ("top_p", float),
+            ("seed", int),
+            ("max_new_tokens", int),
+            ("initial_codec_chunk_frames", int),
+        ):
+            value = payload.get(key)
+            if value is not None:
+                request_payload[key] = caster(value)
+
+        for key in ("language", "instructions", "task_type"):
+            value = payload.get(key)
+            if value is not None:
+                request_payload[key] = value
+
+        if payload.get("x_vector_only_mode") is not None:
+            request_payload["x_vector_only_mode"] = bool(payload.get("x_vector_only_mode"))
+
+        reference = self._resolve_reference(payload)
+        if reference:
+            request_payload["ref_audio"] = reference["audio"]
+            request_payload["ref_text"] = reference["text"]
+            request_payload.setdefault("task_type", "Base")
+
+        return request_payload
+
+    def _resolve_reference(self, payload: dict) -> dict[str, str] | None:
+        reference_id = str(payload.get("reference_id") or "").strip()
+        if reference_id:
+            return self._saved_reference(reference_id)
+
+        refs = payload.get("references") or []
+        if not refs:
+            return None
+        first = refs[0]
+        if not isinstance(first, dict):
+            raise ValueError("Explicit references must be objects")
+
+        explicit_reference_id = str(first.get("reference_id") or "").strip()
+        if explicit_reference_id:
+            return self._saved_reference(explicit_reference_id)
+
+        text = str(first.get("text") or first.get("transcript") or first.get("ref_text") or "").strip()
+        if not text:
+            raise ValueError("Explicit reference must include text/transcript/ref_text")
+
+        audio = (
+            first.get("ref_audio")
+            or first.get("audio")
+            or first.get("audio_url")
+            or first.get("url")
+            or first.get("audio_base64")
+            or first.get("audio_b64")
+        )
+        if not audio and first.get("audio_path"):
+            audio = self._file_to_data_url(Path(str(first["audio_path"])))
+        if not audio:
+            raise ValueError("Explicit reference must include ref_audio/audio/audio_url/audio_path")
+
+        return {"audio": self._normalize_audio_reference(audio, first.get("mime_type")), "text": text}
+
+    def _saved_reference(self, reference_id: str) -> dict[str, str]:
+        reference_dir = self.settings.references_root / reference_id
+        if not reference_dir.exists():
+            raise ValueError(f"Reference does not exist: {reference_id}")
+
+        audio_path = next(
+            (path for path in sorted(reference_dir.iterdir()) if path.suffix.lower() in AUDIO_EXTENSIONS),
+            None,
+        )
+        if audio_path is None:
+            raise ValueError(f"Reference audio does not exist: {reference_id}")
+
+        transcript_path = reference_dir / "sample.lab"
+        if not transcript_path.exists():
+            raise ValueError(f"Reference transcript does not exist: {reference_id}")
+        transcript = transcript_path.read_text(encoding="utf-8", errors="replace").strip()
+        if not transcript:
+            raise ValueError(f"Reference transcript is empty: {reference_id}")
+
+        return {"audio": self._file_to_data_url(audio_path), "text": transcript}
+
+    def _normalize_audio_reference(self, audio: Any, mime_type: Any = None) -> str:
+        value = str(audio or "").strip()
+        if not value:
+            raise ValueError("Reference audio must not be empty")
+        if value.startswith("data:"):
+            return value
+        if "://" in value:
+            return value
+        base64.b64decode(value, validate=True)
+        mime = str(mime_type or "audio/wav").strip() or "audio/wav"
+        return f"data:{mime};base64,{value}"
+
+    def _file_to_data_url(self, path: Path) -> str:
+        if not path.exists():
+            raise ValueError(f"Reference audio path does not exist: {path}")
+        mime = AUDIO_MIME_TYPES.get(path.suffix.lower(), "application/octet-stream")
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        return f"data:{mime};base64,{encoded}"
+
+    @staticmethod
+    def _normalize_model_source(model_source: str) -> str:
+        target = str(model_source or "").strip()
+        if not target:
+            raise ValueError("Model path is required.")
+        return target
+
+
+def create_runtime(settings: Settings | None = None) -> RenderRuntime:
+    runtime_settings = settings or load_settings()
+    engine = runtime_settings.render_engine
+    if engine in {"fish", ""}:
+        return FishRuntime(runtime_settings)
+    if engine in {"vllm-omni", "vllm_omni", "vllm"}:
+        return VllmOmniRuntime(runtime_settings)
+    raise ValueError(f"Unsupported render engine: {runtime_settings.render_engine}")

@@ -39,6 +39,7 @@ from .schemas import (
     TranscriptUpdateRequest,
 )
 from .settings import load_settings
+from .synthesis_limiter import QueueFullError, SynthesisLimiter
 
 settings = load_settings()
 settings.ensure_dirs()
@@ -52,6 +53,7 @@ references = ReferenceService(
     channels=settings.reference_channels,
 )
 models = ModelService(settings, events)
+render_limiter = SynthesisLimiter(settings.render_max_concurrency, settings.render_max_queue)
 logger = logging.getLogger(__name__)
 
 
@@ -82,6 +84,11 @@ async def runtime_error(_, exc: RuntimeError):
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
+@app.exception_handler(QueueFullError)
+async def queue_full_error(_, exc: QueueFullError):
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
+
+
 @app.get("/healthz")
 async def healthz():
     render, preprocess, finetune = await asyncio.gather(
@@ -104,6 +111,7 @@ async def healthz():
         "status": "ok" if ready else "starting",
         "ready": ready,
         "services": {"render": render, "live": live, "preprocess": preprocess, "finetune": finetune},
+        "gateway": {"render_queue": _render_queue_state()},
     }
 
 
@@ -361,11 +369,11 @@ async def benchmark(payload: RenderBenchmarkRequest):
     if live and not settings.live_enabled:
         raise HTTPException(status_code=409, detail="Live runtime is disabled.")
     started = time.perf_counter()
-    audio = await _fetch_audio(data, live=live)
+    audio, queue_meta = await _fetch_audio(data, live=live)
     elapsed = time.perf_counter() - started
     seconds = wav_seconds(audio)
     runtime = await _probe_status(settings.live_url if live else settings.render_url)
-    return {
+    response = {
         "target": "live" if live else "render",
         "engine": runtime.get("engine", "s2cpp" if live and settings.live_engine == "s2cpp" else "fish"),
         "model_path": runtime.get("active_model_path", str(settings.live_model_path if live else settings.model_path)),
@@ -374,15 +382,16 @@ async def benchmark(payload: RenderBenchmarkRequest):
         "rtf": round(elapsed / seconds, 3) if seconds else None,
         "bytes": len(audio),
     }
+    response.update(queue_meta)
+    return response
 
 
 async def _proxy_audio(payload: dict, streaming: bool):
     job = jobs.create("synthesis", {"streaming": streaming, "reference_id": payload.get("reference_id")})
-    jobs.update(job["id"], "running", {"streaming": streaming})
     await events.publish("synthesis.started", {"streaming": streaming, "reference_id": payload.get("reference_id")})
     try:
-        audio = await _fetch_audio(payload, live=False)
-        jobs.update(job["id"], "completed", {"streaming": streaming})
+        audio, queue_meta = await _fetch_audio(payload, live=False, job_id=job["id"], streaming=streaming)
+        jobs.update(job["id"], "completed", {"streaming": streaming, **queue_meta})
         return Response(content=audio, media_type="audio/wav")
     except HTTPException as exc:
         jobs.update(job["id"], "failed", error=str(exc.detail))
@@ -392,7 +401,7 @@ async def _proxy_audio(payload: dict, streaming: bool):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-async def _fetch_audio(payload: dict, live: bool) -> bytes:
+async def _fetch_audio(payload: dict, live: bool, job_id: str | None = None, streaming: bool = False) -> tuple[bytes, dict]:
     if live and not settings.live_enabled:
         raise HTTPException(status_code=409, detail="Live runtime is disabled.")
     prepared_payload = dict(payload)
@@ -408,25 +417,48 @@ async def _fetch_audio(payload: dict, live: bool) -> bytes:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+    queue_meta: dict = {}
+    ticket = None
     if not live:
+        try:
+            ticket = await render_limiter.acquire()
+        except QueueFullError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+        queue_meta = {
+            "queue_wait_sec": round(ticket.wait_seconds, 3),
+            "queue_running": _render_queue_state()["running"],
+            "queue_queued": _render_queue_state()["queued"],
+            "queue_max_concurrency": settings.render_max_concurrency,
+            "queue_max_queue": settings.render_max_queue,
+        }
+        if job_id:
+            jobs.update(job_id, "running", {"streaming": streaming, **queue_meta})
         logger.info(
-            "gateway render request | ref_id=%s | explicit_refs=%s | cache=%s | text_len=%s | text_preview=%r",
+            "gateway render request | ref_id=%s | explicit_refs=%s | cache=%s | text_len=%s | queue_wait=%.3fs | running=%s | queued=%s | text_preview=%r",
             prepared_payload.get("reference_id"),
             len(prepared_payload.get("references") or []),
             prepared_payload.get("use_memory_cache"),
             len(str(prepared_payload.get("text", ""))),
+            ticket.wait_seconds,
+            queue_meta["queue_running"],
+            queue_meta["queue_queued"],
             str(prepared_payload.get("text", ""))[:160],
         )
-    url = f"{settings.live_url if live else settings.render_url}/internal/synthesize"
-    async with httpx.AsyncClient(timeout=3600) as client:
-        response = await client.post(url, json=prepared_payload)
-    if response.status_code >= 400:
-        try:
-            detail = response.json().get("detail")
-        except Exception:
-            detail = response.text
-        raise HTTPException(status_code=response.status_code, detail=detail or "Synthesis failed")
-    return response.content
+    try:
+        url = f"{settings.live_url if live else settings.render_url}/internal/synthesize"
+        async with httpx.AsyncClient(timeout=3600) as client:
+            response = await client.post(url, json=prepared_payload)
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get("detail")
+            except Exception:
+                detail = response.text
+            raise HTTPException(status_code=response.status_code, detail=detail or "Synthesis failed")
+        return response.content, queue_meta
+    finally:
+        if ticket is not None:
+            await render_limiter.release()
 
 
 async def _probe_health(url: str) -> dict:
@@ -655,19 +687,23 @@ def _payload_from_model(payload) -> dict:
 async def _payload_from_openai_request(payload: OpenAIAudioSpeechRequest) -> dict:
     if payload.response_format != "wav":
         raise HTTPException(status_code=400, detail="Only response_format='wav' is supported.")
-    if payload.speed is not None and abs(float(payload.speed) - 1.0) > 1e-6:
+    runtime = await _probe_status(settings.render_url)
+    engine = runtime.get("engine", settings.render_engine or "fish")
+    if engine == "fish" and payload.speed is not None and abs(float(payload.speed) - 1.0) > 1e-6:
         raise HTTPException(status_code=400, detail="Fish render does not support speed adjustment per request.")
     await _ensure_requested_render_model(payload.model)
     extra = getattr(payload, "model_extra", None) or {}
     runtime_payload = {
         "text": payload.input,
-        "reference_id": payload.reference_id or payload.voice,
+        "reference_id": payload.reference_id if engine == "vllm-omni" else (payload.reference_id or payload.voice),
+        "voice": payload.voice if engine == "vllm-omni" else None,
         "references": payload.references,
         "chunk_length": payload.chunk_length,
         "top_p": payload.top_p,
         "repetition_penalty": payload.repetition_penalty,
         "temperature": payload.temperature,
         "seed": payload.seed,
+        "speed": payload.speed if engine == "vllm-omni" else None,
         "normalize": payload.normalize,
         "use_memory_cache": payload.use_memory_cache,
     }
@@ -700,6 +736,7 @@ async def _ensure_requested_render_model(name: str | None) -> None:
 
 async def _render_capabilities() -> dict:
     runtime = await _probe_status(settings.render_url)
+    engine = runtime.get("engine", settings.render_engine or "fish")
     active_model_name = None
     try:
         model_status = await models.status()
@@ -709,7 +746,7 @@ async def _render_capabilities() -> dict:
         pass
 
     return {
-        "engine": "fish",
+        "engine": engine,
         "ready": bool(runtime.get("ready")),
         "active_model_path": runtime.get("active_model_path", str(settings.model_path)),
         "active_model_name": active_model_name,
@@ -718,34 +755,18 @@ async def _render_capabilities() -> dict:
         "compile_enabled": runtime.get("compile_enabled"),
         "supports_reference_id": True,
         "supports_explicit_references": True,
-        "supported_output_formats": ["wav"],
-        "supported_request_fields": [
-            "text",
-            "reference_id",
-            "references",
-            "chunk_length",
-            "top_p",
-            "repetition_penalty",
-            "temperature",
-            "seed",
-            "normalize",
-            "use_memory_cache",
-        ],
-        "defaults": {
-            "chunk_length": int(settings_env("CHUNK_LENGTH", "240")),
-            "temperature": float(settings_env("TEMPERATURE", "0.62")),
-            "top_p": float(settings_env("TOP_P", "0.88")),
-            "repetition_penalty": float(settings_env("REPETITION_PENALTY", "1.15")),
-            "seed": int(settings_env("SEED")) if settings_env("SEED") else None,
-            "normalize": settings_env("NORMALIZE_TEXT", "true").lower() == "true",
-            "use_memory_cache": settings_env("USE_MEMORY_CACHE", "on"),
-        },
+        "supported_output_formats": runtime.get("supported_output_formats", ["wav"]),
+        "supported_request_fields": runtime.get("supported_request_fields") or _default_render_request_fields(engine),
+        "defaults": runtime.get("defaults") or _default_render_defaults(engine),
         "limits": {
             "max_text_length": int(settings_env("MAX_TEXT_LENGTH", "1500")),
             "reference_max_seconds": settings.reference_max_seconds,
             "reference_sample_rate": settings.reference_sample_rate,
             "reference_channels": settings.reference_channels,
+            "gateway_max_concurrency": settings.render_max_concurrency,
+            "gateway_max_queue": settings.render_max_queue,
         },
+        "gateway_parallelism": _render_queue_state(),
         "detail": runtime.get("detail", ""),
     }
 
@@ -754,6 +775,66 @@ def settings_env(name: str, default: str | None = None) -> str | None:
     import os
 
     return os.getenv(name, default)
+
+
+def _render_queue_state() -> dict:
+    return render_limiter.snapshot()
+
+
+def _default_render_request_fields(engine: str) -> list[str]:
+    if engine == "vllm-omni":
+        return [
+            "text",
+            "voice",
+            "reference_id",
+            "references",
+            "speed",
+            "temperature",
+            "top_p",
+            "seed",
+            "language",
+            "instructions",
+            "max_new_tokens",
+            "initial_codec_chunk_frames",
+            "x_vector_only_mode",
+        ]
+    return [
+        "text",
+        "reference_id",
+        "references",
+        "chunk_length",
+        "top_p",
+        "repetition_penalty",
+        "temperature",
+        "seed",
+        "normalize",
+        "use_memory_cache",
+    ]
+
+
+def _default_render_defaults(engine: str) -> dict:
+    if engine == "vllm-omni":
+        return {
+            "voice": "default",
+            "speed": 1.0,
+            "temperature": float(settings_env("TEMPERATURE", "0.62")),
+            "top_p": float(settings_env("TOP_P", "0.88")),
+            "seed": int(settings_env("SEED")) if settings_env("SEED") else None,
+            "language": "auto",
+            "instructions": "",
+            "max_new_tokens": 1024,
+            "initial_codec_chunk_frames": 6,
+            "x_vector_only_mode": False,
+        }
+    return {
+        "chunk_length": int(settings_env("CHUNK_LENGTH", "240")),
+        "temperature": float(settings_env("TEMPERATURE", "0.62")),
+        "top_p": float(settings_env("TOP_P", "0.88")),
+        "repetition_penalty": float(settings_env("REPETITION_PENALTY", "1.15")),
+        "seed": int(settings_env("SEED")) if settings_env("SEED") else None,
+        "normalize": settings_env("NORMALIZE_TEXT", "true").lower() == "true",
+        "use_memory_cache": settings_env("USE_MEMORY_CACHE", "on"),
+    }
 
 
 app.include_router(api)

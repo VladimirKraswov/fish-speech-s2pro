@@ -31,10 +31,12 @@ curl -s http://127.0.0.1:7777/healthz | jq
 - Synthesis endpoints возвращают `audio/wav`.
 - Event stream endpoints возвращают `text/event-stream`.
 - Все ошибки возвращаются как JSON вида `{"detail":"..."}`.
+- Текущий render backend смотрите по полю `engine` в `GET /api/synthesis/capabilities`.
 
 Типичные статусы:
 
 - `200` для успешного JSON/WAV ответа
+- `429` если bounded queue synthesis переполнена
 - `400` для некорректного входа или runtime validation
 - `409` для конфликтов состояния
 - `422` для schema validation на уровне FastAPI/Pydantic
@@ -108,6 +110,7 @@ curl -s http://127.0.0.1:7777/v1/render/models | jq
 - готовность render runtime
 - активную модель
 - `device`, `dtype`, `compile_enabled`
+- текущее состояние gateway queue
 - список поддерживаемых output formats
 - список поддерживаемых per-request полей
 - дефолтные параметры synthesis
@@ -129,26 +132,22 @@ curl -s http://127.0.0.1:7777/v1/render/capabilities | jq
   Дефолты runtime
 - `limits`
   Ограничения runtime
+- `gateway_parallelism`
+  Текущее состояние bounded queue в gateway
 
-Текущий список `supported_request_fields`:
+Список `supported_request_fields` зависит от backend-а:
 
-- `text`
-- `reference_id`
-- `references`
-- `chunk_length`
-- `top_p`
-- `repetition_penalty`
-- `temperature`
-- `seed`
-- `normalize`
-- `use_memory_cache`
+- `fish`
+  `text`, `reference_id`, `references`, `chunk_length`, `top_p`, `repetition_penalty`, `temperature`, `seed`, `normalize`, `use_memory_cache`
+- `vllm-omni`
+  `text`, `voice`, `reference_id`, `references`, `speed`, `temperature`, `top_p`, `seed`, `language`, `instructions`, `max_new_tokens`, `initial_codec_chunk_frames`, `x_vector_only_mode`
 
 ## Render Synthesis
 
 ### `POST /api/synthesis`
 ### `POST /v1/render/speech`
 
-Основной endpoint качественной озвучки через Fish Speech render runtime.
+Основной endpoint качественной озвучки через render runtime. Под капотом это может быть либо `fish`, либо `vllm-omni`.
 
 Request body:
 
@@ -164,6 +163,13 @@ Request body:
 | `seed` | integer or null | no | Seed для воспроизводимости |
 | `normalize` | boolean | no | Нормализовать текст перед synthesis |
 | `use_memory_cache` | string | no | Режим memory cache |
+| `voice` | string | no | Для `vllm-omni`: нативный voice id |
+| `speed` | number | no | Для `vllm-omni`: скорость речи |
+| `language` | string | no | Для `vllm-omni`: language hint |
+| `instructions` | string | no | Для `vllm-omni`: текстовая инструкция по стилю |
+| `max_new_tokens` | integer | no | Для `vllm-omni`: лимит semantic tokens |
+| `initial_codec_chunk_frames` | integer | no | Для `vllm-omni`: размер стартового codec chunk |
+| `x_vector_only_mode` | boolean | no | Для `vllm-omni`: x-vector only mode |
 
 Пример:
 
@@ -192,6 +198,8 @@ curl -o /tmp/render.wav -X POST http://127.0.0.1:7777/v1/render/speech \
 - если текст длиннее `max_text_length`, runtime вернёт `400`
 - если `reference_id` не существует, gateway вернёт `400`
 - если reference требует нормализации и подготовка невозможна, gateway вернёт `409`
+- если `gateway` уже держит максимум одновременных render-запросов и очередь заполнена, вернётся `429`
+- fish-specific knobs (`chunk_length`, `normalize`, `use_memory_cache`, `repetition_penalty`) не применяются на `vllm-omni`; всегда сверяйтесь с `supported_request_fields`
 
 ### `POST /api/synthesis/stream`
 
@@ -270,10 +278,10 @@ Request body:
 | --- | --- | --- | --- |
 | `input` | string | yes | Текст |
 | `model` | string | no | Имя render модели. Если не активна, вернётся `409` |
-| `voice` | string | no | Маппится на `reference_id` |
+| `voice` | string | no | На `fish` маппится на `reference_id`, на `vllm-omni` уходит как нативный `voice` |
 | `reference_id` | string | no | Явный reference id. Имеет приоритет над `voice` |
 | `response_format` | `"wav"` | no | Сейчас поддерживается только `wav` |
-| `speed` | number | no | Поддерживается только `1.0` |
+| `speed` | number | no | Поддерживается только на `vllm-omni` |
 | `references` | array | no | Явные reference payloads |
 | `chunk_length` | integer | no | Override chunk length |
 | `top_p` | number | no | Override top-p |
@@ -301,9 +309,10 @@ curl -o /tmp/render-openai.wav -X POST http://127.0.0.1:7777/v1/audio/speech \
 
 Особенности:
 
-- `voice` маппится на `reference_id`
+- на `fish` поле `voice` маппится на `reference_id`
+- на `vllm-omni` поле `voice` уходит в нативный speech API, а `reference_id` остаётся отдельным saved reference
 - `response_format` отличное от `wav` приводит к `422` schema validation
-- `speed` отличное от `1.0` приводит к `400`
+- `speed` отличное от `1.0` приводит к `400` только на `fish`
 
 ## References
 
@@ -648,6 +657,23 @@ data: {"kind":"hello","payload":{"history":[...]}, "timestamp":"..."}
 
 ## Example Workflows
 
+### 0. Переключить render на `vllm-omni`
+
+Официальные справки:
+
+- [Fish Speech S2 Pro - vLLM-Omni](https://docs.vllm.ai/projects/vllm-omni/en/latest/user_guide/examples/online_serving/fish_speech/)
+- [Speech API - vLLM-Omni](https://docs.vllm.ai/projects/vllm-omni/en/latest/serving/speech_api/)
+
+Минимальный env:
+
+```env
+RENDER_ENGINE=vllm-omni
+ENABLE_VLLM_OMNI=true
+RENDER_MAX_CONCURRENCY=2
+VLLM_OMNI_GPU_MEMORY_UTILIZATION=0.9
+VLLM_OMNI_EXTRA_ARGS=--max-num-seqs 2
+```
+
 ### 1. Проверить готовность и доступные knobs
 
 ```bash
@@ -702,8 +728,9 @@ curl -s -X POST http://127.0.0.1:7777/v1/finetune/start \
 ## Runtime Limitations
 
 - Render endpoint сейчас возвращает только `wav`.
-- `speed` в OpenAI-style endpoint не поддерживается.
+- `speed` в OpenAI-style endpoint не поддерживается на `fish`, но доступен на `vllm-omni`.
 - `response_format` в OpenAI-style endpoint поддерживается только как `wav`.
 - `POST /api/synthesis/stream` сейчас не делает progressive render stream и возвращает готовый WAV.
 - Настройки `dtype`, `device`, `compile`, `max_text_length` относятся к runtime и задаются через конфигурацию окружения, а не per-request.
 - `live` может быть отключён в render-only deployment. Тогда `live` endpoints будут возвращать `409` или статус `disabled`.
+- `vllm-omni` в этом проекте живёт за тем же gateway API, но часть fish-specific knobs на нём игнорируется; ориентируйтесь на `supported_request_fields` и `defaults` из capabilities.

@@ -47,12 +47,15 @@ class ModelService:
     async def status(self) -> dict:
         models = self.list()
         render_runtime = await json_request("GET", f"{self.settings.render_url}/internal/status")
+        render_engine = render_runtime.get("engine", "fish")
         live_runtime = (
             await json_request("GET", f"{self.settings.live_url}/internal/status")
             if self.settings.live_enabled
             else self._disabled_runtime()
         )
-        render_active = self._active_or_external(render_runtime["active_model_path"], models, "fish")
+        render_active = self._active_or_external(render_runtime["active_model_path"], models, render_engine)
+        if render_active:
+            render_active = {**render_active, "engine": render_engine}
         live_active = self._active_or_external(live_runtime["active_model_path"], models, live_runtime.get("engine", "disabled")) if self.settings.live_enabled else None
         for active in (render_active, live_active):
             if active and all(item["path"] != active["path"] for item in models):

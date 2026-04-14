@@ -119,22 +119,39 @@
 `/v1/audio/speech` сделан как OpenAI-style совместимый слой поверх render runtime:
 
 - `input` -> текст для синтеза
-- `voice` -> `reference_id`
+- `voice` -> `reference_id` для `fish`, либо нативный `voice` для `vllm-omni`
 - `response_format` -> пока только `wav`
 
 `GET /api/synthesis/capabilities` и `GET /v1/render/capabilities` отдают не только дефолты runtime, но и `supported_request_fields`, чтобы клиент мог программно понять, какие render-параметры доступны:
 
-- `reference_id`
-- `references`
-- `chunk_length`
-- `temperature`
-- `top_p`
-- `repetition_penalty`
-- `seed`
-- `normalize`
-- `use_memory_cache`
+- `fish`: `reference_id`, `references`, `chunk_length`, `temperature`, `top_p`, `repetition_penalty`, `seed`, `normalize`, `use_memory_cache`
+- `vllm-omni`: `voice`, `reference_id`, `references`, `speed`, `temperature`, `top_p`, `seed`, `language`, `instructions`, `max_new_tokens`, `initial_codec_chunk_frames`, `x_vector_only_mode`
 
 Это даёт возможность работать с качественным `Fish render` программно, не повторяя логику фронтенда, и покрывает не только synthesis, но и `datasets`, `references`, `jobs`, `events`, `finetune`.
+
+## Render backends
+
+`tts-render` теперь умеет два backend-а:
+
+- `RENDER_ENGINE=fish`
+  Текущий in-process Fish Speech runtime с `torch.compile`.
+- `RENDER_ENGINE=vllm-omni`
+  Managed `vllm-omni serve ...` внутри контейнера, но с тем же internal API для gateway.
+
+Для `vllm-omni` полезны официальные справки:
+
+- [Fish Speech S2 Pro - vLLM-Omni](https://docs.vllm.ai/projects/vllm-omni/en/latest/user_guide/examples/online_serving/fish_speech/)
+- [Speech API - vLLM-Omni](https://docs.vllm.ai/projects/vllm-omni/en/latest/serving/speech_api/)
+
+Минимальные env для high-concurrency запуска:
+
+```env
+RENDER_ENGINE=vllm-omni
+ENABLE_VLLM_OMNI=true
+RENDER_MAX_CONCURRENCY=2
+VLLM_OMNI_GPU_MEMORY_UTILIZATION=0.9
+VLLM_OMNI_EXTRA_ARGS=--max-num-seqs 2
+```
 
 ## Отдельный запуск сервисов
 
@@ -172,9 +189,11 @@ Render-only bundle использует отдельный профиль:
 - `RENDER_STACK_CHUNK_LENGTH=240`
 - `OOM_RETRY_CHUNK_CHARS=140`
 - `CHUNK_JOIN_SILENCE_MS=90`
-- `REFERENCE_MAX_SECONDS=12`
+- `REFERENCE_MAX_SECONDS=30`
 - `REFERENCE_SAMPLE_RATE=24000`
 - `REFERENCE_CHANNELS=1`
+- `RENDER_MAX_CONCURRENCY=1`
+- `RENDER_MAX_QUEUE=8`
 - `DTYPE=bfloat16`
 - `NORMALIZE_TEXT=true`
 - `USE_MEMORY_CACHE=on`
@@ -185,6 +204,7 @@ Render-only bundle использует отдельный профиль:
 - VRAM-профиль осторожнее за счёт отключённых `cudagraphs`
 - длинные запросы защищены через автоматический chunked retry после OOM
 - длинные reference-аудио автоматически нормализуются и обрезаются до безопасной длины
+- synthesis идёт через bounded queue в gateway, а не через бесконтрольную конкуренцию
 
 Если нужен ещё более агрессивный speed-профиль и карта выдерживает больший VRAM-пик, запускайте так:
 

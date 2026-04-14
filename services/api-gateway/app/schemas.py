@@ -84,7 +84,7 @@ class ModelStatusResponse(BaseModel):
 
 
 class RenderCapabilitiesResponse(BaseModel):
-    engine: Literal["fish"] = "fish"
+    engine: str = "fish"
     ready: bool
     active_model_path: str
     active_model_name: str | None = None
@@ -97,6 +97,7 @@ class RenderCapabilitiesResponse(BaseModel):
     supported_request_fields: list[str] = Field(default_factory=list)
     defaults: dict[str, Any] = Field(default_factory=dict)
     limits: dict[str, Any] = Field(default_factory=dict)
+    gateway_parallelism: dict[str, Any] = Field(default_factory=dict)
     detail: str | None = None
 
 
