@@ -15,7 +15,7 @@ const FALLBACK_DEFAULTS = Object.freeze({
 });
 const FALLBACK_LIMITS = Object.freeze({
   max_text_length: 1500,
-  reference_max_seconds: 12,
+  reference_max_seconds: 30,
   reference_sample_rate: 24000,
   reference_channels: 1,
 });

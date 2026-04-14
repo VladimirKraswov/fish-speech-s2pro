@@ -46,7 +46,7 @@ def load_settings() -> Settings:
         training_root=paths["training_root"],
         references_root=paths["references_root"],
         logs_root=paths["logs_root"],
-        reference_max_seconds=int(os.getenv("REFERENCE_MAX_SECONDS", "12")),
+        reference_max_seconds=int(os.getenv("REFERENCE_MAX_SECONDS", "30")),
         reference_sample_rate=int(os.getenv("REFERENCE_SAMPLE_RATE", "24000")),
         reference_channels=int(os.getenv("REFERENCE_CHANNELS", "1")),
     )

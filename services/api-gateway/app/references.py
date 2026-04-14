@@ -115,10 +115,13 @@ class ReferenceService:
             channels=self.channels,
         )
         for existing in path.iterdir():
-            if existing.is_file() and existing.name not in {"sample.lab", "reference.json"}:
+            if existing.is_file() and existing.name not in {"sample.lab", "reference.json", target.name}:
                 existing.unlink()
-        target.rename(path / "sample.wav")
-        new_meta["audio_file"] = "sample.wav"
+        final_target = path / "sample.wav"
+        if final_target.exists() and final_target != target:
+            final_target.unlink()
+        target.replace(final_target)
+        new_meta["audio_file"] = final_target.name
         transcript = (path / "sample.lab").read_text(encoding="utf-8", errors="replace") if (path / "sample.lab").exists() else ""
         new_meta["transcript_validation"] = self._validate_transcript(transcript, new_meta.get("duration_sec"))
         save_reference_meta(path, new_meta)

@@ -89,7 +89,7 @@ services:
     environment:
       <<: *shared_env
       LIVE_ENGINE: "disabled"
-      REFERENCE_MAX_SECONDS: "${REFERENCE_MAX_SECONDS:-12}"
+      REFERENCE_MAX_SECONDS: "${REFERENCE_MAX_SECONDS:-30}"
       REFERENCE_SAMPLE_RATE: "${REFERENCE_SAMPLE_RATE:-24000}"
       REFERENCE_CHANNELS: "${REFERENCE_CHANNELS:-1}"
     depends_on:
