@@ -37,7 +37,15 @@ def _apply_fish_speech_dac_decode_compat() -> None:
             return original_decode(self, z_or_codes)
 
         if torch.is_tensor(z_or_codes) and not torch.is_floating_point(z_or_codes):
-            wav_batch = self.from_indices(z_or_codes)
+            indices = z_or_codes.to(dtype=torch.long)
+            if indices.ndim == 2:
+                indices = indices.unsqueeze(0)
+
+            # Match the pre-S2 Fish Speech DAC API that vllm-omni expects:
+            # decode discrete codebook indices and report output lengths in
+            # audio samples via feature_lengths * frame_length.
+            z = self.quantizer.decode(indices)
+            wav_batch = self.decoder(z)
         else:
             wav_batch = original_decode(self, z_or_codes)
 
@@ -47,10 +55,11 @@ def _apply_fish_speech_dac_decode_compat() -> None:
         else:
             lengths = lengths.to(device=wav_batch.device, dtype=torch.long)
 
-        hop_length = int(getattr(self, "hop_length", 2048))
-        audio_lengths = lengths * hop_length
-        if getattr(wav_batch, "ndim", 0) >= 3:
-            audio_lengths = audio_lengths.clamp(min=0, max=int(wav_batch.shape[-1]))
+        frame_length = int(getattr(self, "frame_length", 0) or 0)
+        if frame_length <= 0:
+            hop_length = int(getattr(self, "hop_length", 0) or 0)
+            frame_length = hop_length * 4 if hop_length > 0 else 2048
+        audio_lengths = lengths * frame_length
 
         return wav_batch, audio_lengths
 
