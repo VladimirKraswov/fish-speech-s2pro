@@ -700,8 +700,11 @@ class VllmOmniRuntime:
         request_payload: dict[str, Any] = {
             "input": text,
             "response_format": "wav",
-            "voice": str(payload.get("voice") or "default"),
         }
+
+        voice = str(payload.get("voice") or "").strip()
+        if voice:
+            request_payload["voice"] = voice
 
         for key, caster in (
             ("speed", float),
