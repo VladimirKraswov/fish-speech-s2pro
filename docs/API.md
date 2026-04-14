@@ -379,19 +379,24 @@ curl -s -X POST http://127.0.0.1:7777/v1/render/references \
 ## Model Management
 
 ### `GET /api/models`
+### `GET /api/render/models`
 ### `GET /v1/render/models`
 
 Показать активную модель и список доступных checkpoints.
 
 ### `POST /api/models/activate`
+### `POST /api/render/models/activate`
 ### `POST /v1/render/models/activate`
 
 Request body:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `name` | string | yes | Имя модели из `/models` |
+| `name` | string | no | Имя модели из `/models` |
+| `path` | string | no | Прямой путь к модели. Для `render` это директория с `codec.pth` |
 | `target` | `"render"` or `"live"` | no | Куда активировать. По умолчанию `render` |
+
+Нужно передать либо `name`, либо `path`.
 
 Пример:
 
@@ -399,6 +404,14 @@ Request body:
 curl -s -X POST http://127.0.0.1:7777/v1/render/models/activate \
   -H 'Content-Type: application/json' \
   -d '{"name":"s2-pro","target":"render"}' | jq
+```
+
+Пример для кастомного render checkpoint по пути:
+
+```bash
+curl -s -X POST http://127.0.0.1:7777/api/render/models/activate \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"/app/data/checkpoints/my-custom-render","target":"render"}' | jq
 ```
 
 ## Text Preprocess

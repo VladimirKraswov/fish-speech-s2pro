@@ -27,10 +27,8 @@ class ModelService:
                 rows.append(self._row(path.name, path, "lora", "fish"))
         return rows
 
-    async def activate(self, name: str, target: str) -> dict:
-        model = next((item for item in self.list() if item["name"] == ensure_name(name, "Model name")), None)
-        if not model:
-            raise ValueError(f"Model does not exist: {name}")
+    async def activate(self, name: str | None, target: str, path: str | None = None) -> dict:
+        model = self._resolve_model(name=name, path=path, target=target)
         if target == "live" and not self.settings.live_enabled:
             raise RuntimeError("Live runtime is disabled.")
 
@@ -42,7 +40,7 @@ class ModelService:
         if target == "live" and self.settings.live_enabled and self.settings.live_engine == "s2cpp" and model["engine"] != "s2cpp":
             raise ValueError("Live target is configured for s2.cpp and accepts only GGUF models.")
         await json_request("POST", f"{url}/internal/activate", json={"path": model["path"]})
-        data = {"active": name, "path": model["path"], "target": target}
+        data = {"active": model["name"], "path": model["path"], "target": target}
         await self.events.publish("model.activated", data)
         return data
 
@@ -54,9 +52,14 @@ class ModelService:
             if self.settings.live_enabled
             else self._disabled_runtime()
         )
+        render_active = self._active_or_external(render_runtime["active_model_path"], models, "fish")
+        live_active = self._active_or_external(live_runtime["active_model_path"], models, live_runtime.get("engine", "disabled")) if self.settings.live_enabled else None
+        for active in (render_active, live_active):
+            if active and all(item["path"] != active["path"] for item in models):
+                models = [active, *models]
         return {
-            "render": self._active(render_runtime["active_model_path"], models),
-            "live": self._active(live_runtime["active_model_path"], models) if self.settings.live_enabled else None,
+            "render": render_active,
+            "live": live_active,
             "models": models,
             "render_runtime": render_runtime,
             "live_runtime": live_runtime,
@@ -67,6 +70,53 @@ class ModelService:
 
     def _active(self, path: str, models: list[dict]) -> dict | None:
         return next((item for item in models if item["path"] == path), None)
+
+    def _active_or_external(self, path: str, models: list[dict], engine: str) -> dict | None:
+        active = self._active(path, models)
+        if active or not path:
+            return active
+        candidate = Path(path)
+        kind = "external"
+        if candidate.is_dir():
+            engine_name = "fish"
+            name = candidate.name
+        else:
+            engine_name = "s2cpp" if candidate.suffix.lower() == ".gguf" else engine
+            name = candidate.stem or candidate.name
+        return self._row(name, candidate, kind, engine_name)
+
+    def _resolve_model(self, *, name: str | None, path: str | None, target: str) -> dict:
+        if name and path:
+            raise ValueError("Provide either model name or path, not both.")
+        if path:
+            return self._model_from_path(path, target)
+        if not name:
+            raise ValueError("Model name or path is required.")
+        model = next((item for item in self.list() if item["name"] == ensure_name(name, "Model name")), None)
+        if not model:
+            raise ValueError(f"Model does not exist: {name}")
+        return model
+
+    def _model_from_path(self, path: str, target: str) -> dict:
+        candidate = Path(str(path or "").strip())
+        if not str(candidate):
+            raise ValueError("Model path is required.")
+        if target == "render":
+            if not candidate.exists():
+                raise ValueError(f"Render model path does not exist: {candidate}")
+            if not candidate.is_dir():
+                raise ValueError(f"Render model path must be a directory: {candidate}")
+            codec_path = candidate / "codec.pth"
+            if not codec_path.exists():
+                raise ValueError(f"Render model is missing codec checkpoint: {codec_path}")
+            return self._row(candidate.name, candidate, "external", "fish")
+        if target == "live":
+            if not candidate.exists():
+                raise ValueError(f"Live model path does not exist: {candidate}")
+            if candidate.suffix.lower() != ".gguf":
+                raise ValueError("Live model path must point to a .gguf file for s2.cpp.")
+            return self._row(candidate.stem, candidate, "external", "s2cpp")
+        raise ValueError("Unknown model target")
 
     @staticmethod
     def _disabled_runtime() -> dict:

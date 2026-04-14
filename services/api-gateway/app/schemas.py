@@ -40,7 +40,8 @@ class RenderBenchmarkRequest(BaseModel):
 
 
 class ModelActivateRequest(BaseModel):
-    name: str = Field(...)
+    name: str | None = Field(default=None, description="Registered model name returned by /api/models.")
+    path: str | None = Field(default=None, description="Direct filesystem path to a model. Useful for custom render checkpoints.")
     target: Literal["render", "live"] = "render"
 
 

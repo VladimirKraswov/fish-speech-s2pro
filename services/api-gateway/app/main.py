@@ -221,7 +221,18 @@ async def model_status():
 
 @api.post("/models/activate")
 async def activate_model(payload: ModelActivateRequest):
-    return await models.activate(payload.name, payload.target)
+    return await models.activate(payload.name, payload.target, payload.path)
+
+
+@api.get("/render/models", response_model=ModelStatusResponse)
+async def render_model_status():
+    return await model_status()
+
+
+@api.post("/render/models/activate")
+async def activate_render_model(payload: ModelActivateRequest):
+    render_payload = payload.model_copy(update={"target": "render"})
+    return await activate_model(render_payload)
 
 
 @api.post("/text/preprocess")
@@ -563,7 +574,8 @@ async def v1_model_status():
 
 @v1.post("/render/models/activate")
 async def v1_activate_model(payload: ModelActivateRequest):
-    return await activate_model(payload)
+    render_payload = payload.model_copy(update={"target": "render"})
+    return await activate_model(render_payload)
 
 
 @v1.post("/render/preprocess")

@@ -218,7 +218,9 @@ Gateway теперь можно использовать как полноцен
 - `GET /v1/datasets`
 - `GET /v1/events/history`
 - `GET /v1/render/capabilities`
+- `GET /api/render/models`
 - `GET /v1/render/models`
+- `POST /api/render/models/activate`
 - `POST /v1/render/models/activate`
 - `GET /v1/render/references`
 - `POST /v1/render/speech`
@@ -263,7 +265,7 @@ curl -o /tmp/render.wav -X POST http://127.0.0.1:7777/v1/audio/speech \
 
 - `voice` в `/v1/audio/speech` маппится на `reference_id`
 - `response_format` сейчас поддерживается только `wav`
-- если хотите использовать другой render checkpoint, сначала активируйте его через `POST /api/models/activate` или `POST /v1/render/models/activate`
+- если хотите использовать другой render checkpoint, активировать его можно либо по имени через `POST /api/models/activate` / `POST /v1/render/models/activate`, либо прямым путём через `POST /api/render/models/activate`
 - `GET /api/synthesis/capabilities` и `GET /v1/render/capabilities` теперь возвращают `supported_request_fields`, где перечислены поддерживаемые render knobs
 - для render-запросов наружу доступны `reference_id`, `references`, `chunk_length`, `temperature`, `top_p`, `repetition_penalty`, `seed`, `normalize`, `use_memory_cache`
 - fine-tune сценарий тоже доступен через API: датасеты, валидация конфигурации, старт/стоп обучения, просмотр статуса и jobs
