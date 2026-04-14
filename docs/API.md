@@ -163,13 +163,13 @@ Request body:
 | `seed` | integer or null | no | Seed для воспроизводимости |
 | `normalize` | boolean | no | Нормализовать текст перед synthesis |
 | `use_memory_cache` | string | no | Режим memory cache |
-| `voice` | string | no | Для `vllm-omni`: нативный voice id |
+| `voice` | string | no | Для `vllm-omni`: нативный voice id. Для Fish Speech upstream-путь обычно использует `"default"` |
 | `speed` | number | no | Для `vllm-omni`: скорость речи |
 | `language` | string | no | Для `vllm-omni`: language hint |
 | `instructions` | string | no | Для `vllm-omni`: текстовая инструкция по стилю |
 | `max_new_tokens` | integer | no | Для `vllm-omni`: лимит semantic tokens |
 | `initial_codec_chunk_frames` | integer | no | Для `vllm-omni`: размер стартового codec chunk |
-| `x_vector_only_mode` | boolean | no | Для `vllm-omni`: x-vector only mode |
+| `x_vector_only_mode` | boolean | no | Для `vllm-omni`: speaker-embedding-only режим без transcript-based ICL |
 
 Пример:
 
@@ -200,6 +200,8 @@ curl -o /tmp/render.wav -X POST http://127.0.0.1:7777/v1/render/speech \
 - если reference требует нормализации и подготовка невозможна, gateway вернёт `409`
 - если `gateway` уже держит максимум одновременных render-запросов и очередь заполнена, вернётся `429`
 - fish-specific knobs (`chunk_length`, `normalize`, `use_memory_cache`, `repetition_penalty`) не применяются на `vllm-omni`; всегда сверяйтесь с `supported_request_fields`
+- для Fish Speech на `vllm-omni` saved `reference_id` разворачивается в `ref_audio/ref_text`, а `voice` по умолчанию фиксируется в `"default"` если вы не передали явный upstream voice id
+- при `x_vector_only_mode=true` runtime отправляет только audio-reference без `ref_text`, чтобы соответствовать speaker-embedding-only поведению upstream API
 
 ### `POST /api/synthesis/stream`
 
@@ -243,6 +245,11 @@ Request body:
 | `seed` | integer | no | Override seed |
 | `normalize` | boolean | no | Override normalize |
 | `use_memory_cache` | string | no | Override memory cache |
+| `language` | string | no | Для `vllm-omni`: language hint |
+| `instructions` | string | no | Для `vllm-omni`: текстовая инструкция по стилю |
+| `max_new_tokens` | integer | no | Для `vllm-omni`: лимит semantic tokens |
+| `initial_codec_chunk_frames` | integer | no | Для `vllm-omni`: размер стартового codec chunk |
+| `x_vector_only_mode` | boolean | no | Для `vllm-omni`: speaker-embedding-only режим без transcript-based ICL |
 
 Пример:
 
@@ -278,7 +285,7 @@ Request body:
 | --- | --- | --- | --- |
 | `input` | string | yes | Текст |
 | `model` | string | no | Имя render модели. Если не активна, вернётся `409` |
-| `voice` | string | no | На `fish` маппится на `reference_id`, на `vllm-omni` уходит как нативный `voice` |
+| `voice` | string | no | На `fish` маппится на `reference_id`, на `vllm-omni` уходит как нативный `voice` и для Fish Speech обычно равен `"default"` |
 | `reference_id` | string | no | Явный reference id. Имеет приоритет над `voice` |
 | `response_format` | `"wav"` | no | Сейчас поддерживается только `wav` |
 | `speed` | number | no | Поддерживается только на `vllm-omni` |
@@ -290,6 +297,11 @@ Request body:
 | `seed` | integer | no | Override seed |
 | `normalize` | boolean | no | Override normalize |
 | `use_memory_cache` | string | no | Override memory cache |
+| `language` | string | no | Для `vllm-omni`: language hint |
+| `instructions` | string | no | Для `vllm-omni`: текстовая инструкция по стилю |
+| `max_new_tokens` | integer | no | Для `vllm-omni`: лимит semantic tokens |
+| `initial_codec_chunk_frames` | integer | no | Для `vllm-omni`: размер стартового codec chunk |
+| `x_vector_only_mode` | boolean | no | Для `vllm-omni`: speaker-embedding-only режим без transcript-based ICL |
 
 Пример:
 
@@ -311,6 +323,7 @@ curl -o /tmp/render-openai.wav -X POST http://127.0.0.1:7777/v1/audio/speech \
 
 - на `fish` поле `voice` маппится на `reference_id`
 - на `vllm-omni` поле `voice` уходит в нативный speech API, а `reference_id` остаётся отдельным saved reference
+- для Fish Speech через `vllm-omni` `reference_id` разворачивается в `ref_audio/ref_text`; если `voice` не указан, runtime сам ставит `"default"`
 - `response_format` отличное от `wav` приводит к `422` schema validation
 - `speed` отличное от `1.0` приводит к `400` только на `fish`
 

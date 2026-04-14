@@ -738,12 +738,31 @@ async def _payload_from_openai_request(payload: OpenAIAudioSpeechRequest) -> dic
         "speed": payload.speed if engine == "vllm-omni" else None,
         "normalize": payload.normalize,
         "use_memory_cache": payload.use_memory_cache,
+        "language": payload.language if engine == "vllm-omni" else None,
+        "instructions": payload.instructions if engine == "vllm-omni" else None,
+        "max_new_tokens": payload.max_new_tokens if engine == "vllm-omni" else None,
+        "initial_codec_chunk_frames": payload.initial_codec_chunk_frames if engine == "vllm-omni" else None,
+        "x_vector_only_mode": payload.x_vector_only_mode if engine == "vllm-omni" else None,
     }
     runtime_payload.update(
         {
             key: value
             for key, value in extra.items()
-            if value is not None and key not in {"input", "model", "voice", "reference_id", "response_format", "speed"}
+            if value is not None
+            and key
+            not in {
+                "input",
+                "model",
+                "voice",
+                "reference_id",
+                "response_format",
+                "speed",
+                "language",
+                "instructions",
+                "max_new_tokens",
+                "initial_codec_chunk_frames",
+                "x_vector_only_mode",
+            }
         }
     )
     return {key: value for key, value in runtime_payload.items() if value is not None}

@@ -108,9 +108,12 @@ class OpenAIAudioSpeechRequest(BaseModel):
     model: str | None = Field(default=None, description="Optional active render model name.")
     voice: str | None = Field(
         default=None,
-        description="Maps to Fish Speech reference_id. Use a saved reference name for voice cloning.",
+        description="For fish: maps to saved reference_id. For vllm-omni: native voice id, usually 'default' for Fish Speech.",
     )
-    reference_id: str | None = Field(default=None, description="Explicit reference id. Overrides voice when provided.")
+    reference_id: str | None = Field(
+        default=None,
+        description="Saved reference id. On vllm-omni this is expanded into ref_audio/ref_text for Fish Speech cloning.",
+    )
     response_format: Literal["wav"] = "wav"
     speed: float | None = Field(default=None, description="Not supported by Fish render; only 1.0 is accepted.")
     references: list[dict[str, Any]] | None = None
@@ -121,6 +124,14 @@ class OpenAIAudioSpeechRequest(BaseModel):
     seed: int | None = None
     normalize: bool | None = None
     use_memory_cache: str | None = None
+    language: str | None = None
+    instructions: str | None = None
+    max_new_tokens: int | None = None
+    initial_codec_chunk_frames: int | None = None
+    x_vector_only_mode: bool | None = Field(
+        default=None,
+        description="For vllm-omni Fish Speech: use speaker embedding only and skip transcript-based in-context cloning.",
+    )
 
 
 class SampleRecord(BaseModel):

@@ -705,14 +705,18 @@ class VllmOmniRuntime:
         raise RuntimeError(f"Timed out waiting for managed vllm-omni to restart: {last_error or 'no response'}")
 
     def _build_request(self, payload: dict, text: str) -> dict:
+        x_vector_only_mode = bool(payload.get("x_vector_only_mode"))
+        reference = self._resolve_reference(payload, x_vector_only_mode=x_vector_only_mode)
         request_payload: dict[str, Any] = {
             "input": text,
             "response_format": "wav",
         }
 
-        voice = str(payload.get("voice") or "").strip()
-        if voice:
-            request_payload["voice"] = voice
+        # Fish Speech examples in upstream docs always set voice="default"
+        # for plain TTS and for ref_audio/ref_text cloning. We still allow an
+        # explicit voice override for advanced callers using uploaded voices.
+        voice = str(payload.get("voice") or "").strip() or "default"
+        request_payload["voice"] = voice
 
         for key, caster in (
             ("speed", float),
@@ -732,20 +736,19 @@ class VllmOmniRuntime:
                 request_payload[key] = value
 
         if payload.get("x_vector_only_mode") is not None:
-            request_payload["x_vector_only_mode"] = bool(payload.get("x_vector_only_mode"))
+            request_payload["x_vector_only_mode"] = x_vector_only_mode
 
-        reference = self._resolve_reference(payload)
         if reference:
             request_payload["ref_audio"] = reference["audio"]
-            request_payload["ref_text"] = reference["text"]
-            request_payload.setdefault("task_type", "Base")
+            if not x_vector_only_mode and reference.get("text"):
+                request_payload["ref_text"] = reference["text"]
 
         return request_payload
 
-    def _resolve_reference(self, payload: dict) -> dict[str, str] | None:
+    def _resolve_reference(self, payload: dict, *, x_vector_only_mode: bool = False) -> dict[str, str] | None:
         reference_id = str(payload.get("reference_id") or "").strip()
         if reference_id:
-            return self._saved_reference(reference_id)
+            return self._saved_reference(reference_id, require_text=not x_vector_only_mode)
 
         refs = payload.get("references") or []
         if not refs:
@@ -756,10 +759,10 @@ class VllmOmniRuntime:
 
         explicit_reference_id = str(first.get("reference_id") or "").strip()
         if explicit_reference_id:
-            return self._saved_reference(explicit_reference_id)
+            return self._saved_reference(explicit_reference_id, require_text=not x_vector_only_mode)
 
         text = str(first.get("text") or first.get("transcript") or first.get("ref_text") or "").strip()
-        if not text:
+        if not text and not x_vector_only_mode:
             raise ValueError("Explicit reference must include text/transcript/ref_text")
 
         audio = (
@@ -777,7 +780,7 @@ class VllmOmniRuntime:
 
         return {"audio": self._normalize_audio_reference(audio, first.get("mime_type")), "text": text}
 
-    def _saved_reference(self, reference_id: str) -> dict[str, str]:
+    def _saved_reference(self, reference_id: str, *, require_text: bool = True) -> dict[str, str]:
         reference_dir = self.settings.references_root / reference_id
         if not reference_dir.exists():
             raise ValueError(f"Reference does not exist: {reference_id}")
@@ -790,10 +793,10 @@ class VllmOmniRuntime:
             raise ValueError(f"Reference audio does not exist: {reference_id}")
 
         transcript_path = reference_dir / "sample.lab"
-        if not transcript_path.exists():
+        if require_text and not transcript_path.exists():
             raise ValueError(f"Reference transcript does not exist: {reference_id}")
-        transcript = transcript_path.read_text(encoding="utf-8", errors="replace").strip()
-        if not transcript:
+        transcript = transcript_path.read_text(encoding="utf-8", errors="replace").strip() if transcript_path.exists() else ""
+        if require_text and not transcript:
             raise ValueError(f"Reference transcript is empty: {reference_id}")
 
         return {"audio": self._file_to_data_url(audio_path), "text": transcript}
