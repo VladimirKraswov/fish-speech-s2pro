@@ -12,6 +12,26 @@ docker compose -f compose/render-stack.yml config >/dev/null
 echo "[render-stack] building and starting render-only services"
 docker compose -f compose/render-stack.yml up -d --build
 
+render_wait_attempts() {
+  local default_wait_seconds=900
+  local render_engine="${RENDER_ENGINE:-fish}"
+  local wait_seconds="${RENDER_READY_TIMEOUT_SECONDS:-}"
+
+  if [[ -z "$wait_seconds" ]]; then
+    if [[ "$render_engine" == "vllm-omni" || "$render_engine" == "vllm_omni" || "$render_engine" == "vllm" ]]; then
+      wait_seconds="${VLLM_OMNI_START_TIMEOUT:-2400}"
+    else
+      wait_seconds="$default_wait_seconds"
+    fi
+  fi
+
+  if [[ ! "$wait_seconds" =~ ^[0-9]+$ ]]; then
+    wait_seconds="$default_wait_seconds"
+  fi
+
+  echo $(((wait_seconds + 4) / 5))
+}
+
 wait_for() {
   local url="$1"
   local label="$2"
@@ -32,7 +52,7 @@ wait_for() {
 echo "[render-stack] current status"
 docker compose -f compose/render-stack.yml ps
 
-wait_for "http://127.0.0.1:${RENDER_PORT:-7778}/healthz" "tts-render"
+wait_for "http://127.0.0.1:${RENDER_PORT:-7778}/healthz" "tts-render" "$(render_wait_attempts)"
 wait_for "http://127.0.0.1:${PREPROCESS_PORT:-7780}/healthz" "text-preprocess"
 wait_for "http://127.0.0.1:${FINETUNE_PORT:-7781}/healthz" "finetune-api"
 wait_for "http://127.0.0.1:${GATEWAY_PORT:-7777}/healthz" "api-gateway"

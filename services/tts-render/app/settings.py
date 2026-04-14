@@ -70,5 +70,5 @@ def load_settings() -> Settings:
         vllm_omni_gpu_memory_utilization=float(os.getenv("VLLM_OMNI_GPU_MEMORY_UTILIZATION", "0.9")),
         vllm_omni_stage_configs_path=os.getenv("VLLM_OMNI_STAGE_CONFIGS_PATH", "").strip() or str(default_stage_config),
         vllm_omni_extra_args=os.getenv("VLLM_OMNI_EXTRA_ARGS", ""),
-        vllm_omni_start_timeout=int(os.getenv("VLLM_OMNI_START_TIMEOUT", "900")),
+        vllm_omni_start_timeout=int(os.getenv("VLLM_OMNI_START_TIMEOUT", "2400")),
     )

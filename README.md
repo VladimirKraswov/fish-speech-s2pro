@@ -315,6 +315,8 @@ ENABLE_VLLM_OMNI=true
 RENDER_MAX_CONCURRENCY=2
 VLLM_OMNI_MODEL=fishaudio/s2-pro
 VLLM_OMNI_GPU_MEMORY_UTILIZATION=0.9
+VLLM_OMNI_START_TIMEOUT=2400
+RENDER_HEALTHCHECK_START_PERIOD=2400s
 VLLM_OMNI_EXTRA_ARGS=--max-num-seqs 2
 ```
 
@@ -324,6 +326,7 @@ VLLM_OMNI_EXTRA_ARGS=--max-num-seqs 2
 - `reference_id` автоматически разворачивается в `ref_audio` + `ref_text`
 - смена render-модели через `/api/models/activate` остаётся доступной, но для `vllm-omni` это означает restart managed backend-а
 - fish-specific knobs (`chunk_length`, `normalize`, `use_memory_cache`, `repetition_penalty`) не применяются к `vllm-omni`; смотрите актуальный список через `/api/synthesis/capabilities`
+- первый cold start у `vllm-omni` может занимать много минут из-за скачивания весов и инициализации двух stage-ов, поэтому дефолтный startup timeout и render healthcheck intentionally увеличены
 
 Если нужен ещё более быстрый synthesis и карта выдерживает больший VRAM-пик, можно в `.env` поменять:
 
@@ -375,7 +378,8 @@ VLLM_OMNI_HOST=127.0.0.1
 VLLM_OMNI_PORT=8091
 VLLM_OMNI_MODEL=fishaudio/s2-pro
 VLLM_OMNI_GPU_MEMORY_UTILIZATION=0.9
-VLLM_OMNI_START_TIMEOUT=900
+VLLM_OMNI_START_TIMEOUT=2400
+RENDER_HEALTHCHECK_START_PERIOD=2400s
 VLLM_OMNI_STAGE_CONFIGS_PATH=
 VLLM_OMNI_EXTRA_ARGS=
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
