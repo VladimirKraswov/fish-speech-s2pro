@@ -1,0 +1,55 @@
+name: fish-speech-s2pro
+
+x-shared-env: &shared_env
+  CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-0}
+  PYTORCH_CUDA_ALLOC_CONF: ${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+  HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+
+services:
+  tts-sglang-s2:
+    build:
+      context: ..
+      dockerfile: services/tts-sglang-s2/Dockerfile
+      args:
+        BASE_IMAGE: ${SGLANG_OMNI_IMAGE:-frankleeeee/sglang-omni:dev}
+    container_name: fish-speech-sglang-s2
+    restart: unless-stopped
+    ports: ["${SGLANG_S2_PORT:-7782}:8888"]
+    volumes:
+      - ../data:/app/data
+      - ../references:/app/references
+    environment:
+      <<: *shared_env
+      MODEL_PATH: ${MODEL_PATH:-/app/data/checkpoints/s2-pro}
+      REFERENCES_ROOT: /app/references
+      SGLANG_S2_MODEL_PATH: ${SGLANG_S2_MODEL_PATH:-/app/data/checkpoints/s2-pro}
+      SGLANG_S2_MODEL_NAME: ${SGLANG_S2_MODEL_NAME:-fishaudio-s2-low-ttfb}
+      SGLANG_S2_CONFIG_PATH: ${SGLANG_S2_CONFIG_PATH:-/app/config/s2pro_low_ttfb.yaml}
+      SGLANG_S2_BACKEND_HOST: ${SGLANG_S2_BACKEND_HOST:-127.0.0.1}
+      SGLANG_S2_BACKEND_PORT: "${SGLANG_S2_BACKEND_PORT:-8092}"
+      SGLANG_S2_STARTUP_TIMEOUT: "${SGLANG_S2_STARTUP_TIMEOUT:-2400}"
+      SGLANG_S2_REQUEST_TIMEOUT: "${SGLANG_S2_REQUEST_TIMEOUT:-3600}"
+      SGLANG_S2_TARGET_FIRST_BYTE_MS: "${SGLANG_S2_TARGET_FIRST_BYTE_MS:-200}"
+      SGLANG_S2_EARLY_WAV_HEADER: "${SGLANG_S2_EARLY_WAV_HEADER:-true}"
+      SGLANG_S2_STREAM_SAMPLE_RATE: "${SGLANG_S2_STREAM_SAMPLE_RATE:-44100}"
+      SGLANG_S2_WARMUP: "${SGLANG_S2_WARMUP:-true}"
+      SGLANG_S2_WARMUP_MAX_NEW_TOKENS: "${SGLANG_S2_WARMUP_MAX_NEW_TOKENS:-32}"
+      SGLANG_S2_MAX_NEW_TOKENS: "${SGLANG_S2_MAX_NEW_TOKENS:-1024}"
+      TEMPERATURE: "${TEMPERATURE:-0.8}"
+      TOP_P: "${TOP_P:-0.8}"
+      TOP_K: "${TOP_K:-30}"
+      REPETITION_PENALTY: "${REPETITION_PENALTY:-1.1}"
+      SEED: "${SEED:-}"
+      SGLANG_S2_EXTRA_ARGS: "${SGLANG_S2_EXTRA_ARGS:-}"
+    gpus: all
+    shm_size: ${SGLANG_S2_SHM_SIZE:-32g}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8888/healthz', timeout=5).read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: ${SGLANG_S2_HEALTHCHECK_START_PERIOD:-2400s}
+
+networks:
+  default:
+    name: fish-speech-s2pro

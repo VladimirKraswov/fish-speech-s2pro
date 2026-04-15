@@ -11,6 +11,16 @@
 
 `live`-контур вынесен отдельно и не нужен для запуска качественной озвучки.
 
+Отдельный low-latency вариант FishAudio S2 на SGLang Omni добавлен в
+[services/tts-sglang-s2](/Volumes/Extend/work/fish-speech-s2pro/services/tts-sglang-s2) и запускается отдельным compose-файлом. Он ориентирован на `~200 ms` HTTP time-to-first-byte через streaming endpoint:
+
+```bash
+make sglang-s2-up
+make sglang-s2-profile
+```
+
+Подробности: [docs/SGLANG_S2_LOW_TTFB.md](/Volumes/Extend/work/fish-speech-s2pro/docs/SGLANG_S2_LOW_TTFB.md).
+
 В репозитории есть два режима запуска:
 
 - рекомендуемый `render-only` стек для качественной озвучки на одной GPU

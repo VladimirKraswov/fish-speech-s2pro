@@ -10,6 +10,7 @@ export
         gateway render live preprocess finetune-api finetune-manual \
         render-up render-down render-logs render-build render-health \
         live-up live-down live-logs live-build live-health \
+        sglang-s2-up sglang-s2-down sglang-s2-logs sglang-s2-build sglang-s2-health sglang-s2-profile \
         preprocess-up preprocess-down preprocess-logs preprocess-build preprocess-health \
         finetune-up finetune-down finetune-logs finetune-build finetune-health \
         gateway-up gateway-down gateway-logs gateway-build gateway-health \
@@ -36,9 +37,10 @@ config:
 
 check:
 	PYTHONPYCACHEPREFIX=/tmp/fish-speech-pycache $(PYTHON) -m py_compile $$(find shared -name '*.py') $$(find services -path '*/app/*.py' -o -path '*/app/*/*.py') tests/e2e/test_services.py tests/e2e/profile_live.py
-	bash -n services/api-gateway/entrypoint.sh services/tts-render/entrypoint.sh services/tts-live/entrypoint.sh services/text-preprocess/entrypoint.sh services/finetune/entrypoint.sh services/finetune/fine_tune_runner.sh services/finetune/manual/entrypoint.sh scripts/deploy-render-stack.sh
+	PYTHONPYCACHEPREFIX=/tmp/fish-speech-pycache $(PYTHON) -m py_compile services/tts-sglang-s2/tools/measure_first_byte.py
+	bash -n services/api-gateway/entrypoint.sh services/tts-render/entrypoint.sh services/tts-live/entrypoint.sh services/tts-sglang-s2/entrypoint.sh services/text-preprocess/entrypoint.sh services/finetune/entrypoint.sh services/finetune/fine_tune_runner.sh services/finetune/manual/entrypoint.sh scripts/deploy-render-stack.sh
 	$(COMPOSE) config >/dev/null
-	for f in compose/render.yml compose/live.yml compose/preprocess.yml compose/finetune-api.yml compose/gateway.yml compose/frontend.yml compose/render-stack.yml; do docker compose -f $$f config >/dev/null; done
+	for f in compose/render.yml compose/live.yml compose/sglang-s2.yml compose/preprocess.yml compose/finetune-api.yml compose/gateway.yml compose/frontend.yml compose/render-stack.yml; do docker compose -f $$f config >/dev/null; done
 
 health:
 	curl -fsS http://127.0.0.1:$${GATEWAY_PORT:-7777}/healthz
@@ -85,6 +87,24 @@ live-logs:
 
 live-health:
 	curl -fsS http://127.0.0.1:$${LIVE_PORT:-7779}/healthz
+
+sglang-s2-build:
+	$(SERVICE_COMPOSE) -f compose/sglang-s2.yml build
+
+sglang-s2-up:
+	$(SERVICE_COMPOSE) -f compose/sglang-s2.yml up -d
+
+sglang-s2-down:
+	$(SERVICE_COMPOSE) -f compose/sglang-s2.yml down
+
+sglang-s2-logs:
+	$(SERVICE_COMPOSE) -f compose/sglang-s2.yml logs -f
+
+sglang-s2-health:
+	curl -fsS http://127.0.0.1:$${SGLANG_S2_PORT:-7782}/healthz
+
+sglang-s2-profile:
+	$(PYTHON) services/tts-sglang-s2/tools/measure_first_byte.py --url http://127.0.0.1:$${SGLANG_S2_PORT:-7782}/internal/stream --deadline-ms $${SGLANG_S2_TARGET_FIRST_BYTE_MS:-200}
 
 preprocess-build:
 	$(SERVICE_COMPOSE) -f compose/preprocess.yml build
